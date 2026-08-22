@@ -1,0 +1,21 @@
+{
+  "name": "@drf/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { "./indexer": "./src/indexer/index.ts", "./keeper": "./src/keeper/index.ts" },
+  "scripts": {
+    "start:indexer": "node --env-file-if-exists=../../.env src/indexer/index.ts",
+    "start:keeper": "node --env-file-if-exists=../../.env src/keeper/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@drf/anchor-client": "workspace:^",
+    "@drf/db": "workspace:^",
+    "@drf/shared": "workspace:^",
+    "pino": "^10.3.1",
+    "zod": "^4.5.2"
+  }
+}
