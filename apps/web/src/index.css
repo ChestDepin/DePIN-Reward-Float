@@ -1,0 +1,42 @@
+@import 'tailwindcss';
+
+/* DePIN Reward Float — operator terminal.
+   Dark credit terminal. Monospace only. One accent (amber), reserved
+   exclusively for the final derived number and the rule above it. */
+
+@theme {
+  --color-ground: #0c0d0f;
+  --color-ink: #e8e6e1;
+  --color-dim: #75787e;
+  --color-rule: #22242a;
+  --color-amber: #d9a441;
+
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    background-color: var(--color-ground);
+    color: var(--color-ink);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  input,
+  button {
+    font-family: inherit;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
