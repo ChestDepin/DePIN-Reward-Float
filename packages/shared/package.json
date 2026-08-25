@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./scoring": "./src/scoring/index.ts",
     "./attestation": "./src/attestation/index.ts",
-    "./schemas": "./src/schemas/index.ts"
+    "./schemas": "./src/schemas/index.ts",
+    "./log": "./src/log.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -18,6 +19,7 @@
     "@noble/ed25519": "^3.2.0",
     "@noble/hashes": "^2.4.0",
     "@scure/base": "^2.4.0",
+    "pino": "^10.3.1",
     "zod": "^4.5.2"
   }
 }
