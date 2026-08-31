@@ -3,15 +3,23 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts", "./schema": "./src/schema.ts" },
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "db:generate": "drizzle-kit generate",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@drf/shared": "workspace:^",
     "drizzle-orm": "^0.44.7",
-    "postgres": "^3.4.7"
+    "postgres": "^3.4.7",
+    "zod": "^4.5.2"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.10"
   }
 }
