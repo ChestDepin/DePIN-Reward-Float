@@ -1,3 +1,1 @@
-// Індексатор МЕЙННЕТУ: виплати Hivemapper і Helium, ціновий ряд.
-// Наповнюється у Фазі 4 — склад і порядок у docs/TASKS.md.
-export {}
+export * from './payouts.ts'
