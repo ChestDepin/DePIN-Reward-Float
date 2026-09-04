@@ -282,4 +282,25 @@ describe('indexPayouts', () => {
 
     expect(await indexPayouts({ wallet, networks, rpc, now: NOW })).toEqual([])
   })
+  it('stops at the signature the previous pass ended on', async () => {
+    const { rpc, fetched } = fakeRpc(
+      [
+        { signature: SIGNATURES[0], slot: 442_918_004, blockTime: AUGUST },
+        { signature: SIGNATURES[1], slot: 442_000_000, blockTime: AUGUST - 86_400 },
+      ],
+      { [SIGNATURES[0]]: transaction(), [SIGNATURES[1]]: transaction() },
+    )
+
+    const payouts = await indexPayouts({
+      wallet,
+      networks,
+      rpc,
+      now: NOW,
+      pageSize: 1,
+      until: SIGNATURES[1],
+    })
+
+    expect(payouts).toHaveLength(1)
+    expect(fetched).toEqual([SIGNATURES[0]])
+  })
 })

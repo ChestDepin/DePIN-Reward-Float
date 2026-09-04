@@ -55,6 +55,7 @@ export type IndexPayoutsInput = {
   rpc: SolanaRpc
   now: Date
   pageSize?: number
+  until?: string | null
 }
 
 function failed(err: unknown): boolean {
@@ -140,6 +141,7 @@ export async function indexPayouts({
   rpc,
   now,
   pageSize = SIGNATURE_PAGE_SIZE,
+  until = null,
 }: IndexPayoutsInput): Promise<RecognisedPayout[]> {
   const windowStart = historyWindowStart(now).getTime()
   const payouts: RecognisedPayout[] = []
@@ -151,6 +153,7 @@ export async function indexPayouts({
     )
 
     for (const info of page) {
+      if (info.signature === until) return payouts
       if (info.blockTime === null) continue
       if (info.blockTime * 1000 < windowStart) return payouts
       if (failed(info.err)) continue
