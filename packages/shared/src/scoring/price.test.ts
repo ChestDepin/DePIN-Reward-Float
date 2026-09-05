@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { solanaAddressSchema } from '../schemas/primitives.ts'
-import { calendarDaySchema, createFixturePriceSeriesProvider, priceUsdSchema } from './price.ts'
+import {
+  calendarDaySchema,
+  createFixturePriceSeriesProvider,
+  priceUsdSchema,
+  toCalendarDay,
+} from './price.ts'
 
 const HONEY_MINT = 'B55r1aQEJhL8xba9ncHHrY7w2tsykbtewac2uYUmgLyP'
 const HNT_MINT = 'Da5nJidcBhY7Ae6qCJTkJ3yDeGJkMjhURA5Ny9QEDTne'
@@ -37,6 +42,13 @@ describe('calendarDaySchema', () => {
 
   it('rejects a day that is not zero-padded', () => {
     expect(() => calendarDaySchema.parse('2026-2-3')).toThrow()
+  })
+})
+
+describe('toCalendarDay', () => {
+  it('takes the day in UTC, whatever the clock of the machine says', () => {
+    expect(toCalendarDay(new Date('2026-01-31T23:30:00Z'))).toBe('2026-01-31')
+    expect(toCalendarDay(new Date('2026-02-01T00:30:00Z'))).toBe('2026-02-01')
   })
 })
 

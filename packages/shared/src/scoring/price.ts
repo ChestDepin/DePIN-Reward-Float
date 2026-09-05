@@ -1,11 +1,17 @@
 import { z } from 'zod'
 import { type SolanaAddress, solanaAddressSchema } from '../schemas/primitives.ts'
 
-const PRICE_DECIMALS = 18
+export const PRICE_DECIMALS = 18
 
 export const calendarDaySchema = z.iso.date().brand<'CalendarDay'>()
 
 export type CalendarDay = z.infer<typeof calendarDaySchema>
+
+// Дата виплати береться в UTC: локальний час зсунув би виплату біля межі доби
+// в сусідній день, а разом з нею — і котирування, за яким її оцінили.
+export function toCalendarDay(instant: Date): CalendarDay {
+  return calendarDaySchema.parse(instant.toISOString().slice(0, 10))
+}
 
 // Ціна приходить десятковим рядком і тільки ним: bigint на вході неоднозначний
 // (1n — це долар чи 1e-18?), а number втратив би молодші розряди. Масштаб той
