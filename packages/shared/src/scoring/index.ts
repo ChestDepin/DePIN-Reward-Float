@@ -1,5 +1,6 @@
 export * from './aggregate.ts'
 export * from './classify.ts'
+export * from './eligibility.ts'
 export * from './factors.ts'
 export * from './limit.ts'
 export * from './price.ts'
