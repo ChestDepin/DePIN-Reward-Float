@@ -1,7 +1,7 @@
 import type { CalendarMonth, MonthlyPayouts } from './aggregate.ts'
 import type { PriceSeries } from './price.ts'
 
-const BASIS_POINTS = 10_000n
+export const BASIS_POINTS = 10_000n
 
 // SPEC називає три фактори, але ані ваг, ані формули не задає. Числа живуть тут
 // окремо саме тому, що це рішення продукту, а не властивість розрахунку.
