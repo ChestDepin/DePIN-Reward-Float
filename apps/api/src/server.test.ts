@@ -1,6 +1,18 @@
 import { createLogger } from '@drf/shared/log'
+import { solanaAddressSchema } from '@drf/shared/schemas'
 import { describe, expect, it } from 'vitest'
+import type { PayoutHistorySource } from './routes/operators.ts'
 import { createServer } from './server.ts'
+
+const EMPTY: PayoutHistorySource = {
+  read: async () => ({ payouts: [], networks: [], prices: new Map() }),
+}
+
+const deps = (logger: ReturnType<typeof createLogger>) => ({
+  logger,
+  payouts: EMPTY,
+  now: () => new Date('2026-08-31T12:00:00.000Z'),
+})
 
 function capture() {
   const lines: Record<string, unknown>[] = []
@@ -20,14 +32,14 @@ function capture() {
 
 describe('createServer', () => {
   it('answers /health', async () => {
-    const response = await createServer({ logger: capture().logger }).request('/health')
+    const response = await createServer(deps(capture().logger)).request('/health')
 
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ status: 'ok' })
   })
 
   it('has /v1 mounted, so a path under it is a miss and not a wrong prefix', async () => {
-    const response = await createServer({ logger: capture().logger }).request('/v1/operators')
+    const response = await createServer(deps(capture().logger)).request('/v1/operators')
 
     expect(response.status).toBe(404)
     expect(await response.json()).toEqual({
@@ -35,8 +47,18 @@ describe('createServer', () => {
     })
   })
 
+  it('mounts the operator history under /v1', async () => {
+    const wallet = solanaAddressSchema.parse('4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy')
+
+    const response = await createServer(deps(capture().logger)).request(
+      `/v1/operators/${wallet}/payouts`,
+    )
+
+    expect(response.status).toBe(200)
+  })
+
   it('answers an unknown route in the shared error shape', async () => {
-    const response = await createServer({ logger: capture().logger }).request('/nothing-here')
+    const response = await createServer(deps(capture().logger)).request('/nothing-here')
 
     expect(response.status).toBe(404)
     expect(await response.json()).toMatchObject({ error: { code: 'NOT_FOUND' } })
@@ -44,7 +66,7 @@ describe('createServer', () => {
 
   it('turns a thrown error into 500 without handing the detail to the caller', async () => {
     const { logger } = capture()
-    const app = createServer({ logger })
+    const app = createServer(deps(logger))
     app.get('/v1/boom', () => {
       throw new Error('connection to 10.0.0.4 refused')
     })
@@ -57,7 +79,7 @@ describe('createServer', () => {
 
   it('logs the failed request with enough context to find it', async () => {
     const { lines, logger } = capture()
-    const app = createServer({ logger })
+    const app = createServer(deps(logger))
     app.get('/v1/boom', () => {
       throw new Error('connection to 10.0.0.4 refused')
     })

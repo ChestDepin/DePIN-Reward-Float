@@ -1,22 +1,25 @@
 import { Hono } from 'hono'
 import type { Logger } from 'pino'
+import { createOperatorRoutes, type PayoutHistorySource } from './routes/operators.ts'
 
 export type ServerDeps = {
   logger: Logger
+  payouts: PayoutHistorySource
+  // Годинник параметром: період історії — останні 12 місяців, і тест на межі
+  // місяця інакше падав би раз на місяць.
+  now: () => Date
 }
 
 function errorBody(code: 'NOT_FOUND' | 'INTERNAL', message: string) {
   return { error: { code, message } }
 }
 
-export function createServer({ logger }: ServerDeps): Hono {
+export function createServer({ logger, payouts, now }: ServerDeps): Hono {
   const app = new Hono()
 
   app.get('/health', (c) => c.json({ status: 'ok' }))
 
-  // Порожній навмисно: роути приходять зі своїми задачами. Точка монтування
-  // існує з самого початку, щоб префікс жив в одному місці, а не в кожному роуті.
-  app.route('/v1', new Hono())
+  app.route('/v1', createOperatorRoutes({ payouts, now }))
 
   app.notFound((c) => c.json(errorBody('NOT_FOUND', 'route not found'), 404))
 

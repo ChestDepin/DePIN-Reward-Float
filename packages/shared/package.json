@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./api": "./src/api/index.ts",
     "./scoring": "./src/scoring/index.ts",
     "./attestation": "./src/attestation/index.ts",
     "./schemas": "./src/schemas/index.ts",
