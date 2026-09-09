@@ -1,5 +1,5 @@
 import type { CalendarMonth, MonthlyPayouts } from './aggregate.ts'
-import type { PriceSeries } from './price.ts'
+import type { CalendarDay, PriceSeries, PriceUsd } from './price.ts'
 
 export const BASIS_POINTS = 10_000n
 
@@ -34,22 +34,43 @@ export function medianOf(values: readonly bigint[]): bigint {
   return (lower + upper) / 2n
 }
 
-// Середнє абсолютне відхилення, а не середньоквадратичне: корінь із bigint довелося
-// б рахувати руками заради тієї самої за змістом величини, а MAD ще й менше
-// смикається від одного викиду в ряді.
+const DAY_MS = 86_400_000
+
+function isNextDay(previous: CalendarDay, day: CalendarDay): boolean {
+  return Date.parse(day) - Date.parse(previous) === DAY_MS
+}
+
+// Середня абсолютна ДЕННА зміна, а не відхилення котирувань від їхньої ж середньої
+// за період: на трендовому ряді друге міряє падіння, а не волатильність. Заміряно
+// 2026-08-31 на річних рядах — по відхиленню від середньої HONEY дає 7508 bp і HNT
+// 5215 bp, обидва вище стелі, тож множник перетворювався на константу і жодного
+// гаманця не розрізняв; ті самі ряди по денних змінах дають 462 bp і 387 bp.
+// Середнє абсолютне, а не середньоквадратичне: корінь із bigint довелося б рахувати
+// руками заради тієї самої за змістом величини.
 export function priceVolatilityBp(prices: PriceSeries): bigint {
-  const quotes = [...prices.values()]
-  // Ряд, коротший за дві точки, не рухався. Заниженою волатильністю це ліміт не
-  // завищує: такий ряд означає щонайбільше один день із виплатою за весь період,
-  // а на ньому медіана місячного потоку і так нульова.
-  if (quotes.length < 2) return 0n
+  const quotes = [...prices.entries()].sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  )
 
-  const count = BigInt(quotes.length)
-  const mean = quotes.reduce((sum, quote) => sum + quote, 0n) / count
-  const deviation =
-    quotes.reduce((sum, quote) => sum + (quote > mean ? quote - mean : mean - quote), 0n) / count
+  const changes: bigint[] = []
+  let previous: readonly [CalendarDay, PriceUsd] | undefined
+  for (const [day, price] of quotes) {
+    // Дірку в ряді не перестрибуємо: зміна за п'ять днів не є денною зміною, а
+    // порахована як одна вона завищила б волатильність саме там, де даних бракує.
+    if (previous !== undefined && isNextDay(previous[0], day)) {
+      const before = previous[1]
+      const moved = price > before ? price - before : before - price
+      changes.push((moved * BASIS_POINTS) / before)
+    }
+    previous = [day, price]
+  }
 
-  return (deviation * BASIS_POINTS) / mean
+  // Нуль означає «нема чого міряти», а не «ціна стояла»: у ряді немає жодної пари
+  // сусідніх днів. На денних котируваннях джерела такого не буває — на наших
+  // токенах бракує 6 і 23 днів із 365.
+  if (changes.length === 0) return 0n
+
+  return changes.reduce((sum, change) => sum + change, 0n) / BigInt(changes.length)
 }
 
 export function computeCreditLimit(input: {

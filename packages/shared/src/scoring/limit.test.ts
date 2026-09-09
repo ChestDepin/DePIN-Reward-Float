@@ -11,9 +11,20 @@ const series = (quotes: Record<string, string>): PriceSeries =>
     ]),
   )
 
-const flat = series({ '2026-01-15': '0.05', '2026-02-15': '0.05' })
-const swinging = series({ '2026-01-15': '0.04', '2026-02-15': '0.06' })
-const wild = series({ '2026-01-15': '0.01', '2026-02-15': '0.19' })
+const flat = series({ '2026-01-14': '0.05', '2026-01-15': '0.05' })
+const swinging = series({ '2026-01-14': '0.05', '2026-01-15': '0.04' })
+const wild = series({ '2026-01-14': '0.01', '2026-01-15': '0.19' })
+
+// Падіння на 90 % рівними денними кроками — той самий порядок величини, що рік
+// HONEY (−93 %), тільки без єдиного стрибка.
+const sliding = series(
+  Object.fromEntries(
+    Array.from({ length: 91 }, (_, step) => [
+      new Date(Date.UTC(2026, 0, 1 + step)).toISOString().slice(0, 10),
+      `0.${String(100 - step).padStart(3, '0')}`,
+    ]),
+  ),
+)
 
 const MONTHS = [
   '2026-01',
@@ -77,13 +88,37 @@ describe('priceVolatilityBp', () => {
     expect(priceVolatilityBp(flat)).toBe(0n)
   })
 
-  it('measures the average distance from the mean quote', () => {
-    expect(priceVolatilityBp(swinging)).toBe(2000n)
+  it('averages the daily moves, each against the quote it moved from', () => {
+    const there = series({ '2026-01-14': '0.05', '2026-01-15': '0.04', '2026-01-16': '0.05' })
+
+    expect(priceVolatilityBp(there)).toBe(2250n)
   })
 
-  it('treats a series too short to move as motionless', () => {
+  it('measures a steady slide by its daily step, not by the size of the fall', () => {
+    expect(priceVolatilityBp(sliding)).toBe(250n)
+  })
+
+  it('skips a gap instead of reading the jump across it as one day', () => {
+    const gapped = series({
+      '2026-01-14': '0.05',
+      '2026-01-15': '0.04',
+      '2026-01-17': '0.10',
+      '2026-01-18': '0.11',
+    })
+
+    expect(priceVolatilityBp(gapped)).toBe(1500n)
+  })
+
+  it('does not depend on the order the quotes were read in', () => {
+    const backwards = series({ '2026-01-16': '0.05', '2026-01-15': '0.04', '2026-01-14': '0.05' })
+
+    expect(priceVolatilityBp(backwards)).toBe(2250n)
+  })
+
+  it('treats a series with no two adjacent days as motionless', () => {
     expect(priceVolatilityBp(series({ '2026-01-15': '0.05' }))).toBe(0n)
     expect(priceVolatilityBp(series({}))).toBe(0n)
+    expect(priceVolatilityBp(series({ '2026-01-15': '0.05', '2026-01-17': '0.19' }))).toBe(0n)
   })
 })
 
@@ -168,8 +203,8 @@ describe('computeCreditLimit', () => {
   })
 
   it('does not depend on the order the quotes were read in', () => {
-    const forwards = series({ '2026-01-15': '0.04', '2026-02-15': '0.06', '2026-03-15': '0.05' })
-    const backwards = series({ '2026-03-15': '0.05', '2026-02-15': '0.06', '2026-01-15': '0.04' })
+    const forwards = series({ '2026-01-14': '0.04', '2026-01-15': '0.06', '2026-01-16': '0.05' })
+    const backwards = series({ '2026-01-16': '0.05', '2026-01-15': '0.06', '2026-01-14': '0.04' })
 
     expect(limitOf(everyMonth(100_000_000n), forwards)).toEqual(
       limitOf(everyMonth(100_000_000n), backwards),
