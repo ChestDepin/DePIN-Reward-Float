@@ -15,7 +15,6 @@ export type Eligibility =
       // історія агрегована помісячно, тож точніша дата була б вигаданою.
       thresholdReachedIn: CalendarMonth
     }
-  | { kind: 'incomplete-prices'; months: readonly CalendarMonth[] }
 
 const isPaid = (month: MonthlyPayouts) => month.payoutCount > 0
 
@@ -50,9 +49,6 @@ export function assessEligibility(months: readonly MonthlyPayouts[]): Eligibilit
   if (last === undefined) throw new Error('a period needs a last month to count forward from')
 
   const paidMonths = months.filter(isPaid).length
-  // Порядок відмов: коротка історія не залежить від котирувань і не зміниться,
-  // коли вони доїдуть. Назвати брак цін першим означало б пообіцяти ліміт,
-  // якого не буде і з повним ціновим рядом.
   if (paidMonths < REQUIRED_PAID_MONTHS) {
     return {
       kind: 'short-history',
@@ -61,9 +57,6 @@ export function assessEligibility(months: readonly MonthlyPayouts[]): Eligibilit
       thresholdReachedIn: projectThresholdMonth(months, last.month),
     }
   }
-
-  const unpriced = months.filter((month) => month.valueUsd === null).map((month) => month.month)
-  if (unpriced.length > 0) return { kind: 'incomplete-prices', months: unpriced }
 
   return { kind: 'eligible' }
 }

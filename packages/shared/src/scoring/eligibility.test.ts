@@ -125,14 +125,11 @@ describe('assessEligibility', () => {
     })
   })
 
-  it('names the months without a quote once the history is long enough', () => {
-    expect(assessEligibility(period('PPPPPPPP?PP?'))).toEqual({
-      kind: 'incomplete-prices',
-      months: ['2026-05', '2026-08'],
-    })
+  it('passes a history whose months have no dollar value: the limit no longer needs one', () => {
+    expect(assessEligibility(period('PPPPPPPP?PP?'))).toEqual({ kind: 'eligible' })
   })
 
-  it('refuses a short history before it blames the missing quotes', () => {
+  it('refuses a short history, quotes or no quotes', () => {
     expect(assessEligibility(period('?...........'))).toEqual({
       kind: 'short-history',
       paidMonths: 1,

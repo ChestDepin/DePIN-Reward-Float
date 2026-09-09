@@ -11,9 +11,11 @@ const series = (quotes: Record<string, string>): PriceSeries =>
     ]),
   )
 
-const flat = series({ '2026-01-14': '0.05', '2026-01-15': '0.05' })
-const swinging = series({ '2026-01-14': '0.05', '2026-01-15': '0.04' })
-const wild = series({ '2026-01-14': '0.01', '2026-01-15': '0.19' })
+// Усі три закінчуються останніми днями періоду й мають ту саму недавню ціну
+// $0,05 — інакше тести волатильності рухали б заразом і оцінку потоку.
+const flat = series({ '2026-12-29': '0.05', '2026-12-30': '0.05', '2026-12-31': '0.05' })
+const swinging = series({ '2026-12-29': '0.05', '2026-12-30': '0.04', '2026-12-31': '0.05' })
+const wild = series({ '2026-12-29': '0.05', '2026-12-30': '0.01', '2026-12-31': '0.05' })
 
 // Падіння на 90 % рівними денними кроками — той самий порядок величини, що рік
 // HONEY (−93 %), тільки без єдиного стрибка.
@@ -41,11 +43,16 @@ const MONTHS = [
   '2026-12',
 ]
 
-const month = (name: string, valueUsd: bigint | null, payoutCount = 1): MonthlyPayouts => ({
+const DECIMALS = 9
+const TOKEN = 1_000_000_000n
+
+// `valueUsd: null` скрізь навмисне: ліміт більше не дивиться на вартість місяця
+// за ціною того ж місяця, і рахується навіть тоді, коли її взагалі немає.
+const month = (name: string, tokens: bigint, payoutCount = 1): MonthlyPayouts => ({
   month: calendarMonthSchema.parse(name),
   payoutCount,
-  amount: 1_000_000_000n,
-  valueUsd,
+  amount: tokens * TOKEN,
+  valueUsd: null,
   daysWithoutPrice: [],
 })
 
@@ -57,10 +64,10 @@ const empty = (name: string): MonthlyPayouts => ({
   daysWithoutPrice: [],
 })
 
-const everyMonth = (valueUsd: bigint) => MONTHS.map((name) => month(name, valueUsd))
+const everyMonth = (tokens: bigint) => MONTHS.map((name) => month(name, tokens))
 
 const limitOf = (months: readonly MonthlyPayouts[], prices: PriceSeries = flat) => {
-  const outcome = computeCreditLimit({ months, prices })
+  const outcome = computeCreditLimit({ months, prices, decimals: DECIMALS })
   if (outcome.kind !== 'limit') throw new Error(`expected a limit, got ${outcome.kind}`)
   return outcome
 }
@@ -123,24 +130,29 @@ describe('priceVolatilityBp', () => {
 })
 
 describe('computeCreditLimit', () => {
-  it('lends two months of the median monthly flow', () => {
-    const outcome = limitOf(everyMonth(100_000_000n))
+  it('lends two months of the median monthly flow, priced at the recent quote', () => {
+    const outcome = limitOf(everyMonth(2_000n))
 
+    expect(outcome.medianMonthlyUsd).toBe(100_000_000n)
     expect(outcome.limitUsd).toBe(200_000_000n)
   })
 
+  it('prices the flow at the recent quote, not at what each month was worth then', () => {
+    const months = everyMonth(2_000n).map((entry) => ({ ...entry, valueUsd: 900_000_000n }))
+
+    expect(limitOf(months).limitUsd).toBe(200_000_000n)
+  })
+
   it('takes the median, so one outstanding month does not lift the limit', () => {
-    const months = everyMonth(100_000_000n).map((entry, index) =>
-      index === 11 ? month(entry.month, 10_000_000_000n) : entry,
+    const months = everyMonth(2_000n).map((entry, index) =>
+      index === 11 ? month(entry.month, 200_000n) : entry,
     )
 
     expect(limitOf(months).limitUsd).toBe(200_000_000n)
   })
 
   it('counts a month without payouts as a gap, which lowers the limit twice over', () => {
-    const months = MONTHS.map((name, index) =>
-      index < 6 ? month(name, 200_000_000n) : empty(name),
-    )
+    const months = MONTHS.map((name, index) => (index < 6 ? month(name, 4_000n) : empty(name)))
 
     const outcome = limitOf(months)
 
@@ -150,14 +162,14 @@ describe('computeCreditLimit', () => {
   })
 
   it('lowers the limit when the reward token swings', () => {
-    const outcome = limitOf(everyMonth(100_000_000n), swinging)
+    const outcome = limitOf(everyMonth(2_000n), swinging)
 
-    expect(outcome.volatilityBp).toBe(2000n)
-    expect(outcome.limitUsd).toBe(160_000_000n)
+    expect(outcome.volatilityBp).toBe(2250n)
+    expect(outcome.limitUsd).toBe(155_000_000n)
   })
 
   it('stops cutting the limit past the volatility cap', () => {
-    const outcome = limitOf(everyMonth(100_000_000n), wild)
+    const outcome = limitOf(everyMonth(2_000n), wild)
 
     expect(outcome.volatilityBp).toBe(5000n)
     expect(outcome.limitUsd).toBe(100_000_000n)
@@ -169,49 +181,83 @@ describe('computeCreditLimit', () => {
     expect(outcome.limitUsd).toBe(0n)
   })
 
-  it('refuses to score at all when a month has no value, and names those months', () => {
-    const months = everyMonth(100_000_000n).map((entry, index) =>
-      index === 3 || index === 7 ? month(entry.month, null) : entry,
-    )
+  it('takes the median of the recent window, so one spike does not price the flow', () => {
+    const spike = series({ '2026-12-29': '0.05', '2026-12-30': '0.05', '2026-12-31': '0.20' })
 
-    const outcome = computeCreditLimit({ months, prices: flat })
-
-    expect(outcome).toEqual({ kind: 'incomplete-prices', months: ['2026-04', '2026-08'] })
+    expect(limitOf(everyMonth(2_000n), spike).medianMonthlyUsd).toBe(100_000_000n)
   })
 
-  it('reports the inputs it scored on, so the breakdown does not recompute them', () => {
-    const outcome = limitOf(everyMonth(100_000_000n), swinging)
+  it('leaves the quotes older than the recent window out of the price', () => {
+    const fallen = series({
+      '2026-01-14': '0.50',
+      '2026-01-15': '0.50',
+      '2026-01-16': '0.50',
+      '2026-01-17': '0.50',
+      '2026-12-29': '0.05',
+      '2026-12-30': '0.05',
+      '2026-12-31': '0.05',
+    })
+
+    expect(limitOf(everyMonth(2_000n), fallen).medianMonthlyUsd).toBe(100_000_000n)
+  })
+
+  it('refuses to score when nothing quoted the token recently, and names the window', () => {
+    const stale = series({ '2026-01-14': '0.05', '2026-01-15': '0.05' })
+
+    const outcome = computeCreditLimit({ months: everyMonth(2_000n), prices: stale, decimals: 9 })
 
     expect(outcome).toEqual({
-      kind: 'limit',
-      limitUsd: 160_000_000n,
-      medianMonthlyUsd: 100_000_000n,
-      stabilityBp: 10_000n,
-      volatilityBp: 2000n,
+      kind: 'no-recent-price',
+      window: { from: '2026-12-02', to: '2026-12-31' },
     })
   })
 
-  it('gives the same number twice on the same data', () => {
+  it('reports the inputs it scored on, so the breakdown does not recompute them', () => {
+    const outcome = limitOf(everyMonth(2_000n), swinging)
+
+    expect(outcome).toEqual({
+      kind: 'limit',
+      limitUsd: 155_000_000n,
+      medianMonthlyUsd: 100_000_000n,
+      stabilityBp: 10_000n,
+      volatilityBp: 2250n,
+    })
+  })
+
+  it('gives the same number twice on the same months and the same series', () => {
     const months = MONTHS.map((name, index) =>
-      index % 3 === 0 ? empty(name) : month(name, BigInt(index) * 7_000_000n),
+      index % 3 === 0 ? empty(name) : month(name, BigInt(index) * 140n),
     )
 
-    const first = computeCreditLimit({ months, prices: swinging })
-    const second = computeCreditLimit({ months, prices: swinging })
+    const first = computeCreditLimit({ months, prices: swinging, decimals: DECIMALS })
+    const second = computeCreditLimit({ months, prices: swinging, decimals: DECIMALS })
 
     expect(first).toEqual(second)
+    expect(first).toEqual({
+      kind: 'limit',
+      limitUsd: 21_697_830n,
+      medianMonthlyUsd: 21_000_000n,
+      stabilityBp: 6666n,
+      volatilityBp: 2250n,
+    })
+  })
+
+  it('scores the same months differently when the series ends a day earlier', () => {
+    const through31 = series({ '2026-12-29': '0.06', '2026-12-30': '0.05', '2026-12-31': '0.04' })
+    const through30 = series({ '2026-12-29': '0.06', '2026-12-30': '0.05' })
+
+    expect(limitOf(everyMonth(2_000n), through31).medianMonthlyUsd).toBe(100_000_000n)
+    expect(limitOf(everyMonth(2_000n), through30).medianMonthlyUsd).toBe(120_000_000n)
   })
 
   it('does not depend on the order the quotes were read in', () => {
-    const forwards = series({ '2026-01-14': '0.04', '2026-01-15': '0.06', '2026-01-16': '0.05' })
-    const backwards = series({ '2026-01-16': '0.05', '2026-01-15': '0.06', '2026-01-14': '0.04' })
+    const forwards = series({ '2026-12-29': '0.04', '2026-12-30': '0.06', '2026-12-31': '0.05' })
+    const backwards = series({ '2026-12-31': '0.05', '2026-12-30': '0.06', '2026-12-29': '0.04' })
 
-    expect(limitOf(everyMonth(100_000_000n), forwards)).toEqual(
-      limitOf(everyMonth(100_000_000n), backwards),
-    )
+    expect(limitOf(everyMonth(2_000n), forwards)).toEqual(limitOf(everyMonth(2_000n), backwards))
   })
 
   it('rejects a period with no months in it', () => {
-    expect(() => computeCreditLimit({ months: [], prices: flat })).toThrow()
+    expect(() => computeCreditLimit({ months: [], prices: flat, decimals: DECIMALS })).toThrow()
   })
 })

@@ -70,18 +70,18 @@ describe('explainLimit', () => {
     ].map((name, index) => ({
       month: calendarMonthSchema.parse(name),
       payoutCount: index < 7 ? 1 : 0,
-      amount: 0n,
-      valueUsd: index < 7 ? 33_333_333n : 0n,
+      amount: index < 7 ? 606_060_606_060n : 0n,
+      valueUsd: null,
       daysWithoutPrice: [],
     }))
 
     const prices: PriceSeries = new Map([
-      [calendarDaySchema.parse('2026-01-15'), priceUsdSchema.parse('0.04')],
-      [calendarDaySchema.parse('2026-02-15'), priceUsdSchema.parse('0.06')],
-      [calendarDaySchema.parse('2026-03-15'), priceUsdSchema.parse('0.055')],
+      [calendarDaySchema.parse('2026-12-29'), priceUsdSchema.parse('0.04')],
+      [calendarDaySchema.parse('2026-12-30'), priceUsdSchema.parse('0.055')],
+      [calendarDaySchema.parse('2026-12-31'), priceUsdSchema.parse('0.06')],
     ])
 
-    const outcome = computeCreditLimit({ months, prices })
+    const outcome = computeCreditLimit({ months, prices, decimals: 9 })
     if (outcome.kind !== 'limit') throw new Error(`expected a limit, got ${outcome.kind}`)
 
     expect(outcome.stabilityBp).toBe(5833n)

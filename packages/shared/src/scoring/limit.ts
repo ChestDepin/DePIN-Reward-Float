@@ -1,5 +1,11 @@
-import type { CalendarMonth, MonthlyPayouts } from './aggregate.ts'
-import type { CalendarDay, PriceSeries, PriceUsd } from './price.ts'
+import { type CalendarMonth, type MonthlyPayouts, payoutValueUsd } from './aggregate.ts'
+import {
+  type CalendarDay,
+  type DayRange,
+  type PriceSeries,
+  type PriceUsd,
+  toCalendarDay,
+} from './price.ts'
 
 export const BASIS_POINTS = 10_000n
 
@@ -7,6 +13,9 @@ export const BASIS_POINTS = 10_000n
 // окремо саме тому, що це рішення продукту, а не властивість розрахунку.
 export const MONTHS_OF_FLOW = 2n
 export const VOLATILITY_CAP_BP = 5_000n
+// Недавня ціна береться медіаною за вікно, а не спотом: одна свічка на тонкому
+// ринку не має рухати ліміт.
+export const RECENT_PRICE_DAYS = 30
 
 export type LimitOutcome =
   | {
@@ -19,7 +28,10 @@ export type LimitOutcome =
       // подіяло, а не те, наскільки насправді хитався токен.
       volatilityBp: bigint
     }
-  | { kind: 'incomplete-prices'; months: readonly CalendarMonth[] }
+  // FR-004a: без недавньої ціни ліміт не рахується взагалі, і це інше твердження,
+  // ніж «ліміт 0». Вікно віддається назвати, щоб відповідь могла сказати, де саме
+  // котирувань не знайшлося.
+  | { kind: 'no-recent-price'; window: DayRange }
 
 export function medianOf(values: readonly bigint[]): bigint {
   const sorted = [...values].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
@@ -73,23 +85,40 @@ export function priceVolatilityBp(prices: PriceSeries): bigint {
   return changes.reduce((sum, change) => sum + change, 0n) / BigInt(changes.length)
 }
 
+// Вікно закінчується останнім днем періоду, а не останнім днем ряду: інакше ряд,
+// що обірвався три місяці тому, сам оголосив би свою останню ціну недавньою.
+function recentWindow(last: CalendarMonth): DayRange {
+  const endOfMonth = new Date(Date.UTC(Number(last.slice(0, 4)), Number(last.slice(5, 7)), 0))
+
+  return {
+    from: toCalendarDay(new Date(endOfMonth.getTime() - (RECENT_PRICE_DAYS - 1) * DAY_MS)),
+    to: toCalendarDay(endOfMonth),
+  }
+}
+
+// Серединне котирування, а не середнє двох середніх: недавня ціна має бути ціною,
+// яка справді була, а не вигаданою точкою між двома.
+function medianQuote(prices: PriceSeries, window: DayRange): PriceUsd | undefined {
+  const quotes = [...prices]
+    .filter(([day]) => day >= window.from && day <= window.to)
+    .map(([, price]) => price)
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
+
+  return quotes[quotes.length >> 1]
+}
+
 export function computeCreditLimit(input: {
   months: readonly MonthlyPayouts[]
   prices: PriceSeries
+  decimals: number
 }): LimitOutcome {
-  const { months, prices } = input
-  if (months.length === 0) throw new Error('a limit needs a period of at least one month')
+  const { months, prices, decimals } = input
+  const last = months[months.length - 1]
+  if (last === undefined) throw new Error('a limit needs a period of at least one month')
 
-  const values: bigint[] = []
-  const unpriced: CalendarMonth[] = []
-  for (const month of months) {
-    if (month.valueUsd === null) unpriced.push(month.month)
-    else values.push(month.valueUsd)
-  }
-
-  // FR-004a: неповний ціновий ряд глушить розрахунок цілком. Порахувати ліміт
-  // по решті місяців означало б підставити замість них нуль.
-  if (unpriced.length > 0) return { kind: 'incomplete-prices', months: unpriced }
+  const window = recentWindow(last.month)
+  const recentPrice = medianQuote(prices, window)
+  if (recentPrice === undefined) return { kind: 'no-recent-price', window }
 
   const paidMonths = months.filter((month) => month.payoutCount > 0).length
   const stabilityBp = (BigInt(paidMonths) * BASIS_POINTS) / BigInt(months.length)
@@ -97,7 +126,14 @@ export function computeCreditLimit(input: {
   const measured = priceVolatilityBp(prices)
   const volatilityBp = measured > VOLATILITY_CAP_BP ? VOLATILITY_CAP_BP : measured
 
-  const medianMonthlyUsd = medianOf(values)
+  // Потік береться в токенах і оцінюється однією недавньою ціною: оцінка кожного
+  // місяця ціною того ж місяця кредитує під вартість, якої вже не існує, тоді як
+  // позика гаситься майбутніми винагородами за майбутніми цінами.
+  const medianMonthlyUsd = payoutValueUsd(
+    medianOf(months.map((month) => month.amount)),
+    decimals,
+    recentPrice,
+  )
 
   // Одне обрізання в кінці, а не після кожного множника: інакше той самий набір
   // даних дає різні числа залежно від порядку дій (SC-002).
