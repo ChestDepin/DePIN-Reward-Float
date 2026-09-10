@@ -3,6 +3,7 @@ import { solanaAddressSchema } from '../schemas/primitives.ts'
 import {
   calendarDaySchema,
   createFixturePriceSeriesProvider,
+  formatPriceUsd,
   priceUsdSchema,
   toCalendarDay,
 } from './price.ts'
@@ -78,6 +79,27 @@ describe('priceUsdSchema', () => {
     expect(() => priceUsdSchema.parse('.052')).toThrow()
     expect(() => priceUsdSchema.parse('0.')).toThrow()
     expect(() => priceUsdSchema.parse('abc')).toThrow()
+  })
+})
+
+describe('formatPriceUsd', () => {
+  it('writes the quote back at the scale of the price column', () => {
+    expect(formatPriceUsd(priceUsdSchema.parse('0.052'))).toBe('0.052000000000000000')
+    expect(formatPriceUsd(priceUsdSchema.parse('12'))).toBe('12.000000000000000000')
+  })
+
+  it('keeps the smallest representable quote instead of rounding it away', () => {
+    expect(formatPriceUsd(priceUsdSchema.parse('0.000000000000000001'))).toBe(
+      '0.000000000000000001',
+    )
+  })
+
+  it('round-trips every quote the schema accepts', () => {
+    for (const quote of ['0.001218', '0.01766', '2.51', '0.000543', '3.17']) {
+      expect(priceUsdSchema.parse(formatPriceUsd(priceUsdSchema.parse(quote)))).toBe(
+        priceUsdSchema.parse(quote),
+      )
+    }
   })
 })
 

@@ -33,6 +33,15 @@ export const priceUsdSchema = z
 
 export type PriceUsd = z.infer<typeof priceUsdSchema>
 
+// Зворотний бік `priceUsdSchema`: рівно `PRICE_DECIMALS` знаків, бо саме так
+// котирування лягає в `price_points.price_usd numeric(38,18)` і повертається
+// звідти без розбіжності в останньому розряді.
+export function formatPriceUsd(units: PriceUsd): string {
+  const scale = 10n ** BigInt(PRICE_DECIMALS)
+
+  return `${units / scale}.${(units % scale).toString().padStart(PRICE_DECIMALS, '0')}`
+}
+
 export const dayRangeSchema = z
   .object({ from: calendarDaySchema, to: calendarDaySchema })
   .refine(({ from, to }) => from <= to, 'the range ends before it starts')
