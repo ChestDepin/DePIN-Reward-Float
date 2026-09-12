@@ -1,11 +1,16 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { parseRewardNetworks, rewardNetworkSchema, solanaAddressSchema } from '@drf/shared/schemas'
+import {
+  parseRewardNetworks,
+  rewardNetworkSchema,
+  solanaAddressSchema,
+  SUPPORTED_NETWORKS,
+} from '@drf/shared/schemas'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createDatabase, type Database } from './index.ts'
 import { networks } from './schema.ts'
-import { SUPPORTED_NETWORKS, seedNetworks, toNetworkRow } from './seed.ts'
+import { seedNetworks, toNetworkRow } from './seed.ts'
 
 function databaseUrl(): string | undefined {
   if (process.env.DATABASE_URL !== undefined) return process.env.DATABASE_URL
