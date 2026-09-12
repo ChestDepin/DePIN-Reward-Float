@@ -6,6 +6,7 @@ import { z } from 'zod'
 import * as schema from './schema.ts'
 
 export * from './schema.ts'
+export * from './seed.ts'
 
 export type Database = PostgresJsDatabase<typeof schema>
 

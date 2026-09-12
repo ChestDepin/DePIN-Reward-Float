@@ -80,6 +80,7 @@ describe('migrations', () => {
         { idx: 0, tag: '0000_init' },
         { idx: 1, tag: '0001_payout_sources' },
         { idx: 2, tag: '0002_drop_distributors' },
+        { idx: 3, tag: '0003_on_demand_cadence' },
       ],
     })
   })

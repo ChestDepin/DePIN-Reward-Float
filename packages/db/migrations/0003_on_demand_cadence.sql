@@ -1,0 +1,1 @@
+ALTER TYPE "public"."payout_cadence" ADD VALUE 'on-demand';

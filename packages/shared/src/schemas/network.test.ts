@@ -103,6 +103,15 @@ describe('rewardNetworkSchema', () => {
     ).toBe(true)
   })
 
+  // Helium не має каденції як властивості мережі: винагорода накопичується, а
+  // знімає її оператор коли хоче — один щотижня, інший раз на рік. Ритм належить
+  // оператору, і мережа мусить могти сказати саме це, а не вибрати неправду.
+  it('lets a network say it pays on demand instead of on a rhythm', () => {
+    const network = rewardNetworkSchema.parse({ ...hivemapper, payoutCadence: 'on-demand' })
+
+    expect(network.payoutCadence).toBe('on-demand')
+  })
+
   it('rejects an unknown payout cadence', () => {
     expect(rewardNetworkSchema.safeParse({ ...hivemapper, payoutCadence: 'often' }).success).toBe(
       false,

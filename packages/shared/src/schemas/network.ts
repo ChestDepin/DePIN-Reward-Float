@@ -1,7 +1,10 @@
 import { z } from 'zod'
 import { solanaAddressSchema } from './primitives.ts'
 
-export const PAYOUT_CADENCES = ['daily', 'weekly', 'monthly'] as const
+// `on-demand` — не ритм, а його відсутність: мережа накопичує винагороду, і
+// момент виплати обирає оператор (Helium через `lazy_distributor`). Ончейн у
+// такої мережі лежить історія зняттів, а не заробітку — застереження `FR-001a`.
+export const PAYOUT_CADENCES = ['daily', 'weekly', 'monthly', 'on-demand'] as const
 
 // Винагорода доходить до оператора двома різними способами, і адреси самої
 // замало, щоб їх розрізнити. `transfer` — переказ від розподільника, власника
