@@ -3,7 +3,7 @@
 
 export const HIVEMAPPER_ADDRESS = 'HvmDemo7xK2qF4b9WgQn3sT8yLcRzA1eU6dJ5mNpVe'
 export const HELIUM_ADDRESS = 'He1iumDemo9pQ4rT7vXbN2kZmYs5wLgC8jEuA3fDhR'
-export const DISTRIBUTOR_ADDRESS = 'HvmRwrdDistDemo4nQ8xT2cVbM6kLpZjR9sWyE3'
+export const PAYOUT_SOURCE_ADDRESS = 'HvmRwrdDistDemo4nQ8xT2cVbM6kLpZjR9sWyE3'
 
 export type PayoutRow = {
   month: string

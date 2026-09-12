@@ -64,7 +64,7 @@ export function createDbPayoutHistorySource(db: Database): PayoutHistorySource {
         .select({
           signature: payoutsTable.signature,
           networkId: payoutsTable.networkId,
-          distributor: payoutsTable.distributor,
+          source: payoutsTable.source,
           amount: payoutsTable.amount,
           slot: payoutsTable.slot,
           blockTime: payoutsTable.blockTime,
@@ -96,7 +96,7 @@ export function createDbPayoutHistorySource(db: Database): PayoutHistorySource {
           id: row.id,
           displayName: row.displayName,
           token: { mint: row.tokenMint, symbol: row.tokenSymbol, decimals: row.tokenDecimals },
-          distributors: row.distributors,
+          payoutSources: row.payoutSources,
           payoutCadence: row.payoutCadence,
         }),
       )
@@ -177,7 +177,7 @@ export function buildPayoutHistory(input: {
 
             return {
               signature: payout.signature,
-              distributor: payout.distributor,
+              source: payout.source,
               amount: payout.amount.toString(),
               valueUsd:
                 price === undefined

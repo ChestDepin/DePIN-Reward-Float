@@ -4,11 +4,13 @@ import { historyWindowStart, indexPayouts, readIncomingTransfers } from './payou
 
 const HONEY_MINT = 'B55r1aQEJhL8xba9ncHHrY7w2tsykbtewac2uYUmgLyP'
 const HNT_MINT = 'Da5nJidcBhY7Ae6qCJTkJ3yDeGJkMjhURA5Ny9QEDTne'
-const HIVEMAPPER_DISTRIBUTOR = 'G55iQCAVJt13mvYADJcqUddM3cpXEx5i94L54R6VgUz7'
+const HIVEMAPPER_AUTHORITY = 'G55iQCAVJt13mvYADJcqUddM3cpXEx5i94L54R6VgUz7'
 const HELIUM_DISTRIBUTOR = 'GqzFuskZTGHjVWKFid1J45FfbWYWCikuHnjP1viPrUx'
 const OPERATOR = '61G2U72VLHjSsAvTArQwb2Wg7vaVkVoEzPN8sdgxBLde'
+const OPERATOR_TOKEN_ACCOUNT = '2RZMt9LwzUzSUNfprdLSUF33gS2Y3EJL3jqN6g6a9oP1'
 const STRANGER = '9axh44i2g6U3q4KZxG9ieH4Z8Khx4N8npn4hWotr8zeZ'
 const ANOTHER_SENDER = 'DAfMe2NyHFfCgsqa2PgrUaVHouLKmkY7FRdNirhXavLz'
+const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
 
 const SIGNATURES = [
   'mHhyPe2Am14FUfW89ak1Hut2cALVwKTtK3iKxomPkpamC7B17HTknFAgoSwT7zpz3shFoXhugio8pjPb9eRS6Ca',
@@ -16,19 +18,21 @@ const SIGNATURES = [
   '3FSFdDkCqRXTJMTkC8NefDfhPLx3hMEh9M3JSx3YaAxnBQSNnPcLxYNVe6ALkk7DRt82QSVP9SAF8QY3C2bANmcp',
 ] as const
 
+// Так платять насправді: Hivemapper карбує винагороду в мить виплати й
+// відправника не має взагалі, Helium переказує її з акаунта розподільника.
 const networks = parseRewardNetworks([
   {
     id: 'hivemapper',
     displayName: 'Hivemapper',
     token: { mint: HONEY_MINT, symbol: 'HONEY', decimals: 9 },
-    distributors: [HIVEMAPPER_DISTRIBUTOR],
+    payoutSources: [{ kind: 'mint', address: HIVEMAPPER_AUTHORITY }],
     payoutCadence: 'weekly',
   },
   {
     id: 'helium',
     displayName: 'Helium',
     token: { mint: HNT_MINT, symbol: 'HNT', decimals: 8 },
-    distributors: [HELIUM_DISTRIBUTOR],
+    payoutSources: [{ kind: 'transfer', address: HELIUM_DISTRIBUTOR }],
     payoutCadence: 'daily',
   },
 ])
@@ -53,31 +57,61 @@ const balance = (accountIndex: number, owner: string, mint: string, amount: stri
   uiTokenAmount: { amount },
 })
 
+const mintTo = (authority: string, mint: string, amount: string) => ({
+  program: 'spl-token',
+  programId: TOKEN_PROGRAM,
+  parsed: {
+    type: 'mintTo',
+    info: { account: OPERATOR_TOKEN_ACCOUNT, amount, mint, mintAuthority: authority },
+  },
+})
+
 type TransactionOptions = {
   slot?: number
   blockTime?: number | null
   pre?: Balance[]
   post?: Balance[]
   err?: unknown
+  instructions?: unknown[]
+  inner?: unknown[]
 }
 
 const transaction = ({
   slot = 442_918_004,
   blockTime = AUGUST,
-  pre = [
-    balance(1, HIVEMAPPER_DISTRIBUTOR, HONEY_MINT, '9000'),
-    balance(2, OPERATOR, HONEY_MINT, '10'),
-  ],
-  post = [
-    balance(1, HIVEMAPPER_DISTRIBUTOR, HONEY_MINT, '5000'),
-    balance(2, OPERATOR, HONEY_MINT, '4010'),
-  ],
+  pre = [],
+  post = [],
   err = null,
+  instructions = [],
+  inner = [],
 }: TransactionOptions = {}) => ({
   slot,
   blockTime,
-  meta: { err, preTokenBalances: pre, postTokenBalances: post },
+  transaction: { message: { instructions } },
+  meta: {
+    err,
+    preTokenBalances: pre,
+    postTokenBalances: post,
+    innerInstructions: inner.length === 0 ? [] : [{ index: 2, instructions: inner }],
+  },
 })
+
+// Емісія: жодного акаунта з від'ємною дельтою в транзакції немає, джерело
+// читається з інструкції. Саме ця форма не розпізнавалась до T023c.
+const emission = (options: TransactionOptions = {}) =>
+  transaction({
+    pre: [balance(2, OPERATOR, HONEY_MINT, '10')],
+    post: [balance(2, OPERATOR, HONEY_MINT, '4010')],
+    inner: [mintTo(HIVEMAPPER_AUTHORITY, HONEY_MINT, '4000')],
+    ...options,
+  })
+
+const transfer = (options: TransactionOptions = {}) =>
+  transaction({
+    pre: [balance(1, HELIUM_DISTRIBUTOR, HNT_MINT, '900'), balance(2, OPERATOR, HNT_MINT, '10')],
+    post: [balance(1, HELIUM_DISTRIBUTOR, HNT_MINT, '400'), balance(2, OPERATOR, HNT_MINT, '510')],
+    ...options,
+  })
 
 type SignatureInfo = { signature: string; slot: number; blockTime: number | null; err?: unknown }
 
@@ -106,42 +140,171 @@ describe('historyWindowStart', () => {
 })
 
 describe('readIncomingTransfers', () => {
-  it('reads what the operator received, in minimal units, and who sent it', () => {
-    const transfers = readIncomingTransfers(transaction(), wallet, SIGNATURES[0])
+  it('reads what the operator received in a transfer, in minimal units, and who sent it', () => {
+    const transfers = readIncomingTransfers(transfer(), wallet, SIGNATURES[0])
 
     expect(transfers).toEqual([
       expect.objectContaining({
         signature: SIGNATURES[0],
-        source: HIVEMAPPER_DISTRIBUTOR,
+        via: 'transfer',
+        source: HELIUM_DISTRIBUTOR,
         destination: OPERATOR,
-        mint: HONEY_MINT,
-        amount: 4000n,
+        mint: HNT_MINT,
+        amount: 500n,
         slot: 442_918_004n,
       }),
     ])
   })
 
-  it('counts a token account opened by this very transaction, which has no prior balance', () => {
+  it('reads a minted reward and names the mint authority as its source', () => {
+    const transfers = readIncomingTransfers(emission(), wallet, SIGNATURES[0])
+
+    expect(transfers).toEqual([
+      expect.objectContaining({
+        via: 'mint',
+        source: HIVEMAPPER_AUTHORITY,
+        destination: OPERATOR,
+        mint: HONEY_MINT,
+        amount: 4000n,
+      }),
+    ])
+  })
+
+  it('reads a reward minted by a top-level instruction, not only through a CPI', () => {
     const transfers = readIncomingTransfers(
-      transaction({
-        pre: [balance(1, HIVEMAPPER_DISTRIBUTOR, HONEY_MINT, '9000')],
-        post: [
-          balance(1, HIVEMAPPER_DISTRIBUTOR, HONEY_MINT, '5000'),
-          balance(2, OPERATOR, HONEY_MINT, '4000'),
+      emission({ inner: [], instructions: [mintTo(HIVEMAPPER_AUTHORITY, HONEY_MINT, '4000')] }),
+      wallet,
+      SIGNATURES[0],
+    )
+
+    expect(transfers[0]?.source).toBe(HIVEMAPPER_AUTHORITY)
+  })
+
+  it('reads mintToChecked the same way', () => {
+    const checked = {
+      ...mintTo(HIVEMAPPER_AUTHORITY, HONEY_MINT, '4000'),
+      parsed: {
+        type: 'mintToChecked',
+        info: {
+          account: OPERATOR_TOKEN_ACCOUNT,
+          mint: HONEY_MINT,
+          mintAuthority: HIVEMAPPER_AUTHORITY,
+        },
+      },
+    }
+
+    expect(readIncomingTransfers(emission({ inner: [checked] }), wallet, SIGNATURES[0])[0]?.via)
+      .toBe('mint')
+  })
+
+  // Виплата Hivemapper карбується двічі — водієві та фліт-менеджеру, — і в
+  // транзакції це дві інструкції з тим самим авторитетом.
+  it('takes two mints by one authority as a single arrival of the net amount', () => {
+    const transfers = readIncomingTransfers(
+      emission({
+        inner: [
+          mintTo(HIVEMAPPER_AUTHORITY, HONEY_MINT, '3000'),
+          mintTo(HIVEMAPPER_AUTHORITY, HONEY_MINT, '1000'),
         ],
       }),
       wallet,
       SIGNATURES[0],
     )
 
+    expect(transfers).toHaveLength(1)
     expect(transfers[0]?.amount).toBe(4000n)
+  })
+
+  it('reads nothing when two authorities mint the same token in one transaction', () => {
+    const transfers = readIncomingTransfers(
+      emission({
+        inner: [
+          mintTo(HIVEMAPPER_AUTHORITY, HONEY_MINT, '3000'),
+          mintTo(ANOTHER_SENDER, HONEY_MINT, '1000'),
+        ],
+      }),
+      wallet,
+      SIGNATURES[0],
+    )
+
+    expect(transfers).toEqual([])
+  })
+
+  // Переказ і емісія в одній транзакції роблять джерело неоднозначним так само,
+  // як двоє відправників: приписати надходження одному з них — здогадка.
+  it('reads nothing when the token both arrives by transfer and is minted', () => {
+    const transfers = readIncomingTransfers(
+      emission({
+        pre: [balance(1, ANOTHER_SENDER, HONEY_MINT, '900'), balance(2, OPERATOR, HONEY_MINT, '10')],
+        post: [
+          balance(1, ANOTHER_SENDER, HONEY_MINT, '400'),
+          balance(2, OPERATOR, HONEY_MINT, '4510'),
+        ],
+      }),
+      wallet,
+      SIGNATURES[0],
+    )
+
+    expect(transfers).toEqual([])
+  })
+
+  it('ignores a mint of another token when reading what arrived', () => {
+    const transfers = readIncomingTransfers(
+      emission({
+        inner: [
+          mintTo(HIVEMAPPER_AUTHORITY, HONEY_MINT, '4000'),
+          mintTo(ANOTHER_SENDER, HNT_MINT, '7'),
+        ],
+      }),
+      wallet,
+      SIGNATURES[0],
+    )
+
+    expect(transfers).toEqual([
+      expect.objectContaining({ mint: HONEY_MINT, source: HIVEMAPPER_AUTHORITY }),
+    ])
+  })
+
+  it('reads nothing from an arrival it cannot attribute to any source', () => {
+    expect(readIncomingTransfers(emission({ inner: [] }), wallet, SIGNATURES[0])).toEqual([])
+  })
+
+  it('reads nothing from a mint whose authority the node did not report', () => {
+    const anonymous = {
+      program: 'spl-token',
+      programId: TOKEN_PROGRAM,
+      parsed: {
+        type: 'mintTo',
+        info: { account: OPERATOR_TOKEN_ACCOUNT, amount: '4000', mint: HONEY_MINT },
+      },
+    }
+
+    expect(readIncomingTransfers(emission({ inner: [anonymous] }), wallet, SIGNATURES[0])).toEqual(
+      [],
+    )
+  })
+
+  it('counts a token account opened by this very transaction, which has no prior balance', () => {
+    const transfers = readIncomingTransfers(
+      transfer({
+        pre: [balance(1, HELIUM_DISTRIBUTOR, HNT_MINT, '900')],
+        post: [
+          balance(1, HELIUM_DISTRIBUTOR, HNT_MINT, '400'),
+          balance(2, OPERATOR, HNT_MINT, '500'),
+        ],
+      }),
+      wallet,
+      SIGNATURES[0],
+    )
+
+    expect(transfers[0]?.amount).toBe(500n)
   })
 
   it('reads nothing from a transaction that only takes the token away', () => {
     const transfers = readIncomingTransfers(
-      transaction({
-        pre: [balance(2, OPERATOR, HONEY_MINT, '4000')],
-        post: [balance(2, OPERATOR, HONEY_MINT, '1000')],
+      transfer({
+        pre: [balance(2, OPERATOR, HNT_MINT, '4000')],
+        post: [balance(2, OPERATOR, HNT_MINT, '1000')],
       }),
       wallet,
       SIGNATURES[0],
@@ -152,16 +315,16 @@ describe('readIncomingTransfers', () => {
 
   it('reads nothing when two senders of the same token make the source ambiguous', () => {
     const transfers = readIncomingTransfers(
-      transaction({
+      transfer({
         pre: [
-          balance(1, HIVEMAPPER_DISTRIBUTOR, HONEY_MINT, '9000'),
-          balance(3, ANOTHER_SENDER, HONEY_MINT, '9000'),
-          balance(2, OPERATOR, HONEY_MINT, '0'),
+          balance(1, HELIUM_DISTRIBUTOR, HNT_MINT, '900'),
+          balance(3, ANOTHER_SENDER, HNT_MINT, '900'),
+          balance(2, OPERATOR, HNT_MINT, '0'),
         ],
         post: [
-          balance(1, HIVEMAPPER_DISTRIBUTOR, HONEY_MINT, '7000'),
-          balance(3, ANOTHER_SENDER, HONEY_MINT, '7000'),
-          balance(2, OPERATOR, HONEY_MINT, '4000'),
+          balance(1, HELIUM_DISTRIBUTOR, HNT_MINT, '700'),
+          balance(3, ANOTHER_SENDER, HNT_MINT, '700'),
+          balance(2, OPERATOR, HNT_MINT, '400'),
         ],
       }),
       wallet,
@@ -173,18 +336,12 @@ describe('readIncomingTransfers', () => {
 
   it('reads nothing from a failed transaction', () => {
     expect(
-      readIncomingTransfers(
-        transaction({ err: { InstructionError: [0, 'x'] } }),
-        wallet,
-        SIGNATURES[0],
-      ),
+      readIncomingTransfers(emission({ err: { InstructionError: [0, 'x'] } }), wallet, SIGNATURES[0]),
     ).toEqual([])
   })
 
   it('reads nothing from a transaction with no block time: it cannot be placed in a month', () => {
-    expect(readIncomingTransfers(transaction({ blockTime: null }), wallet, SIGNATURES[0])).toEqual(
-      [],
-    )
+    expect(readIncomingTransfers(emission({ blockTime: null }), wallet, SIGNATURES[0])).toEqual([])
   })
 
   it('rejects a response that is not a transaction', () => {
@@ -200,19 +357,8 @@ describe('indexPayouts', () => {
         { signature: SIGNATURES[1], slot: 442_000_000, blockTime: AUGUST - 86_400 },
       ],
       {
-        [SIGNATURES[0]]: transaction(),
-        [SIGNATURES[1]]: transaction({
-          slot: 442_000_000,
-          blockTime: AUGUST - 86_400,
-          pre: [
-            balance(1, HELIUM_DISTRIBUTOR, HNT_MINT, '900'),
-            balance(2, OPERATOR, HNT_MINT, '0'),
-          ],
-          post: [
-            balance(1, HELIUM_DISTRIBUTOR, HNT_MINT, '400'),
-            balance(2, OPERATOR, HNT_MINT, '500'),
-          ],
-        }),
+        [SIGNATURES[0]]: emission(),
+        [SIGNATURES[1]]: transfer({ slot: 442_000_000, blockTime: AUGUST - 86_400 }),
       },
     )
 
@@ -220,14 +366,23 @@ describe('indexPayouts', () => {
 
     expect(payouts.map((payout) => payout.networkId)).toEqual(['hivemapper', 'helium'])
     expect(payouts[0]?.amount).toBe(4000n)
-    expect(payouts[1]?.distributor).toBe(HELIUM_DISTRIBUTOR)
+    expect(payouts[0]?.source).toBe(HIVEMAPPER_AUTHORITY)
+    expect(payouts[1]?.source).toBe(HELIUM_DISTRIBUTOR)
+  })
+
+  it('ignores the same token minted by a stranger', async () => {
+    const { rpc } = fakeRpc([{ signature: SIGNATURES[0], slot: 1, blockTime: AUGUST }], {
+      [SIGNATURES[0]]: emission({ inner: [mintTo(STRANGER, HONEY_MINT, '4000')] }),
+    })
+
+    expect(await indexPayouts({ wallet, networks, rpc, now: NOW })).toEqual([])
   })
 
   it('ignores the same token sent by a stranger', async () => {
     const { rpc } = fakeRpc([{ signature: SIGNATURES[0], slot: 1, blockTime: AUGUST }], {
-      [SIGNATURES[0]]: transaction({
-        pre: [balance(1, STRANGER, HONEY_MINT, '9000'), balance(2, OPERATOR, HONEY_MINT, '0')],
-        post: [balance(1, STRANGER, HONEY_MINT, '5000'), balance(2, OPERATOR, HONEY_MINT, '4000')],
+      [SIGNATURES[0]]: transfer({
+        pre: [balance(1, STRANGER, HNT_MINT, '900'), balance(2, OPERATOR, HNT_MINT, '10')],
+        post: [balance(1, STRANGER, HNT_MINT, '400'), balance(2, OPERATOR, HNT_MINT, '510')],
       }),
     })
 
@@ -242,9 +397,9 @@ describe('indexPayouts', () => {
         { signature: SIGNATURES[2], slot: 299_000_000, blockTime: A_YEAR_AND_A_HALF_AGO - 86_400 },
       ],
       {
-        [SIGNATURES[0]]: transaction(),
-        [SIGNATURES[1]]: transaction({ blockTime: A_YEAR_AND_A_HALF_AGO }),
-        [SIGNATURES[2]]: transaction({ blockTime: A_YEAR_AND_A_HALF_AGO - 86_400 }),
+        [SIGNATURES[0]]: emission(),
+        [SIGNATURES[1]]: emission({ blockTime: A_YEAR_AND_A_HALF_AGO }),
+        [SIGNATURES[2]]: emission({ blockTime: A_YEAR_AND_A_HALF_AGO - 86_400 }),
       },
     )
 
@@ -264,7 +419,7 @@ describe('indexPayouts', () => {
           err: { InstructionError: [0, 'x'] },
         },
       ],
-      { [SIGNATURES[0]]: transaction() },
+      { [SIGNATURES[0]]: emission() },
     )
 
     expect(await indexPayouts({ wallet, networks, rpc, now: NOW })).toEqual([])
@@ -282,13 +437,14 @@ describe('indexPayouts', () => {
 
     expect(await indexPayouts({ wallet, networks, rpc, now: NOW })).toEqual([])
   })
+
   it('stops at the signature the previous pass ended on', async () => {
     const { rpc, fetched } = fakeRpc(
       [
         { signature: SIGNATURES[0], slot: 442_918_004, blockTime: AUGUST },
         { signature: SIGNATURES[1], slot: 442_000_000, blockTime: AUGUST - 86_400 },
       ],
-      { [SIGNATURES[0]]: transaction(), [SIGNATURES[1]]: transaction() },
+      { [SIGNATURES[0]]: emission(), [SIGNATURES[1]]: emission() },
     )
 
     const payouts = await indexPayouts({

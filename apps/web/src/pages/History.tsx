@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { DISTRIBUTOR_ADDRESS, HIVEMAPPER_ADDRESS, MAX_VALUE, PAYOUTS } from '../lib/data'
+import { PAYOUT_SOURCE_ADDRESS, HIVEMAPPER_ADDRESS, MAX_VALUE, PAYOUTS } from '../lib/data'
 
 const COLS = 'sm:grid sm:grid-cols-[72px_1fr_1fr_1fr_120px] sm:gap-x-4 sm:items-center'
 
@@ -76,8 +76,8 @@ const History = () => {
         <h2 className="text-[11px] tracking-[0.14em] text-dim">SOURCE</h2>
         <div className="mt-3 space-y-1 text-[11px] sm:text-[12px] text-dim">
           <div className="flex flex-col gap-y-0.5 sm:flex-row sm:gap-x-4">
-            <span className="w-[110px] shrink-0">distributor</span>
-            <span className="break-all">{DISTRIBUTOR_ADDRESS}</span>
+            <span className="w-[110px] shrink-0">payout source</span>
+            <span className="break-all">{PAYOUT_SOURCE_ADDRESS}</span>
           </div>
           <div className="flex flex-col gap-y-0.5 sm:flex-row sm:gap-x-4">
             <span className="w-[110px] shrink-0">first payout</span>

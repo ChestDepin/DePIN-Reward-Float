@@ -10,7 +10,7 @@ const wholeNumberSchema = z.string().regex(/^\d+$/, 'expected a whole number as 
 
 export const payoutEntrySchema = z.object({
   signature: z.string(),
-  distributor: solanaAddressSchema,
+  source: solanaAddressSchema,
   amount: wholeNumberSchema,
   valueUsd: wholeNumberSchema.nullable(),
   slot: wholeNumberSchema,

@@ -44,7 +44,7 @@ const payout = (signature: string, networkId: string, amount: bigint): Recognise
   signature,
   wallet: WALLET,
   networkId,
-  distributor: SENDER,
+  source: SENDER,
   amount,
   slot: 442_918_004n,
   blockTime: new Date('2026-08-29T00:00:00.000Z'),
@@ -74,7 +74,7 @@ describe.skipIf(url === undefined)('cursor against a live postgres', () => {
         tokenMint: MINT,
         tokenSymbol: 'HONEY',
         tokenDecimals: 9,
-        distributors: [SENDER],
+        payoutSources: [{ kind: 'transfer' as const, address: SENDER }],
         payoutCadence: 'weekly' as const,
       })),
     )

@@ -74,6 +74,25 @@ describe('migrations', () => {
       readFileSync(path.join(MIGRATIONS_FOLDER, 'meta', '_journal.json'), 'utf8'),
     )
 
-    expect(journal).toMatchObject({ dialect: 'postgresql', entries: [{ tag: '0000_init' }] })
+    expect(journal).toMatchObject({
+      dialect: 'postgresql',
+      entries: [
+        { idx: 0, tag: '0000_init' },
+        { idx: 1, tag: '0001_payout_sources' },
+        { idx: 2, tag: '0002_drop_distributors' },
+      ],
+    })
+  })
+
+  // Джерело виплати не перейменоване, а перестворене: колонки міняють і тип, і
+  // сенс, а обидві таблиці порожні, тож переносити не було чого.
+  it('replaces the payout source in two steps instead of renaming a column', () => {
+    const added = readFileSync(path.join(MIGRATIONS_FOLDER, '0001_payout_sources.sql'), 'utf8')
+    const dropped = readFileSync(path.join(MIGRATIONS_FOLDER, '0002_drop_distributors.sql'), 'utf8')
+
+    expect(added).toContain('"payout_sources" jsonb NOT NULL')
+    expect(added).toContain('"source" text NOT NULL')
+    expect(dropped).toContain('DROP COLUMN "distributors"')
+    expect(dropped).toContain('DROP COLUMN "distributor"')
   })
 })

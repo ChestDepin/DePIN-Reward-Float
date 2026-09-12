@@ -1,6 +1,11 @@
 import { base58 } from '@scure/base'
 import { z } from 'zod'
-import type { RewardNetwork } from '../schemas/network.ts'
+import {
+  PAYOUT_SOURCE_KINDS,
+  type PayoutSourceKind,
+  payoutSourceKey,
+  type RewardNetwork,
+} from '../schemas/network.ts'
 import {
   baseUnitsSchema,
   blockTimeSchema,
@@ -20,9 +25,11 @@ const transactionSignatureSchema = z.string().refine((value) => {
 
 // `source` і `destination` — власники токен-акаунтів, а не самі акаунти: адреса
 // токен-акаунта ніколи не дорівнює гаманцю оператора, тож виплата йому
-// виглядала б переказом до третьої сторони.
+// виглядала б переказом до третьої сторони. У емісії відправника немає взагалі,
+// і `source` там — авторитет мінта; `via` каже, що саме з двох перед нами.
 export const tokenTransferSchema = z.object({
   signature: transactionSignatureSchema,
+  via: z.enum(PAYOUT_SOURCE_KINDS),
   source: solanaAddressSchema,
   destination: solanaAddressSchema,
   mint: solanaAddressSchema,
@@ -37,7 +44,7 @@ export type RecognisedPayout = {
   signature: string
   wallet: SolanaAddress
   networkId: string
-  distributor: SolanaAddress
+  source: SolanaAddress
   amount: bigint
   slot: bigint
   blockTime: Date
@@ -49,12 +56,15 @@ export type TransferClassification =
   | { kind: 'payout'; payout: RecognisedPayout }
   | { kind: 'ignored'; reason: IgnoredReason }
 
-function findNetworkByDistributor(
-  distributor: SolanaAddress,
+function findNetworkBySource(
+  via: PayoutSourceKind,
+  address: SolanaAddress,
   networks: ReadonlyMap<string, RewardNetwork>,
 ): RewardNetwork | undefined {
+  const wanted = payoutSourceKey({ kind: via, address })
+
   for (const network of networks.values()) {
-    if (network.distributors.includes(distributor)) return network
+    if (network.payoutSources.some((source) => payoutSourceKey(source) === wanted)) return network
   }
   return undefined
 }
@@ -66,7 +76,10 @@ export function classifyTransfer(
 ): TransferClassification {
   if (transfer.destination !== operator) return { kind: 'ignored', reason: 'not-to-operator' }
 
-  const network = findNetworkByDistributor(transfer.source, networks)
+  // Звіряється пара, а не адреса: емісія від адреси, записаної як розподільник
+  // переказів, виплатою не є — інакше чужий ключ, що став авторитетом мінта,
+  // карбував би собі впізнану історію.
+  const network = findNetworkBySource(transfer.via, transfer.source, networks)
   if (network === undefined) return { kind: 'ignored', reason: 'unknown-source' }
 
   if (transfer.mint !== network.token.mint) return { kind: 'ignored', reason: 'mint-mismatch' }
@@ -81,7 +94,7 @@ export function classifyTransfer(
       signature: transfer.signature,
       wallet: operator,
       networkId: network.id,
-      distributor: transfer.source,
+      source: transfer.source,
       amount: transfer.amount,
       slot: transfer.slot,
       blockTime: transfer.blockTime,

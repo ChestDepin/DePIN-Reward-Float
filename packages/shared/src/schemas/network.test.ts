@@ -3,16 +3,16 @@ import { parseRewardNetworks, rewardNetworkSchema } from './network.ts'
 
 const MINT_A = '4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy'
 const MINT_B = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
-const DISTRIBUTOR_A = '11111111111111111111111111111111'
-const DISTRIBUTOR_B = 'SysvarC1ock11111111111111111111111111111111'
-const DISTRIBUTOR_C = 'Sysvar1nstructions1111111111111111111111111'
-const DISTRIBUTOR_D = 'SysvarRent111111111111111111111111111111111'
+const SOURCE_A = '11111111111111111111111111111111'
+const SOURCE_B = 'SysvarC1ock11111111111111111111111111111111'
+const SOURCE_C = 'Sysvar1nstructions1111111111111111111111111'
+const SOURCE_D = 'SysvarRent111111111111111111111111111111111'
 
 const hivemapper = {
   id: 'hivemapper',
   displayName: 'Hivemapper',
   token: { mint: MINT_A, symbol: 'HONEY', decimals: 9 },
-  distributors: [DISTRIBUTOR_A],
+  payoutSources: [{ kind: 'mint', address: SOURCE_A }],
   payoutCadence: 'weekly',
 }
 
@@ -20,7 +20,10 @@ const helium = {
   id: 'helium',
   displayName: 'Helium',
   token: { mint: MINT_B, symbol: 'HNT', decimals: 8 },
-  distributors: [DISTRIBUTOR_B, DISTRIBUTOR_C],
+  payoutSources: [
+    { kind: 'transfer', address: SOURCE_B },
+    { kind: 'transfer', address: SOURCE_C },
+  ],
   payoutCadence: 'daily',
 }
 
@@ -30,27 +33,74 @@ describe('rewardNetworkSchema', () => {
 
     expect(network.id).toBe('hivemapper')
     expect(network.token.decimals).toBe(9)
-    expect(network.distributors).toEqual([DISTRIBUTOR_A])
+    expect(network.payoutSources).toEqual([{ kind: 'mint', address: SOURCE_A }])
     expect(network.payoutCadence).toBe('weekly')
   })
 
-  it('requires at least one distributor: without it no payout can be recognised', () => {
-    expect(rewardNetworkSchema.safeParse({ ...hivemapper, distributors: [] }).success).toBe(false)
+  it('reads both ways a reward can arrive: a transfer and an emission', () => {
+    const network = rewardNetworkSchema.parse({
+      ...hivemapper,
+      payoutSources: [
+        { kind: 'transfer', address: SOURCE_B },
+        { kind: 'mint', address: SOURCE_A },
+      ],
+    })
+
+    expect(network.payoutSources.map((source) => source.kind)).toEqual(['transfer', 'mint'])
   })
 
-  it('rejects a distributor that is not an address', () => {
-    expect(
-      rewardNetworkSchema.safeParse({ ...hivemapper, distributors: ['not-an-address'] }).success,
-    ).toBe(false)
+  it('requires at least one source: without it no payout can be recognised', () => {
+    expect(rewardNetworkSchema.safeParse({ ...hivemapper, payoutSources: [] }).success).toBe(false)
   })
 
-  it('rejects the same distributor listed twice', () => {
+  it('rejects a source that is not an address', () => {
     expect(
       rewardNetworkSchema.safeParse({
         ...hivemapper,
-        distributors: [DISTRIBUTOR_A, DISTRIBUTOR_A],
+        payoutSources: [{ kind: 'mint', address: 'not-an-address' }],
       }).success,
     ).toBe(false)
+  })
+
+  it('rejects a way of arriving that the classifier cannot check', () => {
+    expect(
+      rewardNetworkSchema.safeParse({
+        ...hivemapper,
+        payoutSources: [{ kind: 'burn', address: SOURCE_A }],
+      }).success,
+    ).toBe(false)
+  })
+
+  it('rejects a bare address where a source is expected', () => {
+    expect(
+      rewardNetworkSchema.safeParse({ ...hivemapper, payoutSources: [SOURCE_A] }).success,
+    ).toBe(false)
+  })
+
+  it('rejects the same source listed twice', () => {
+    expect(
+      rewardNetworkSchema.safeParse({
+        ...hivemapper,
+        payoutSources: [
+          { kind: 'mint', address: SOURCE_A },
+          { kind: 'mint', address: SOURCE_A },
+        ],
+      }).success,
+    ).toBe(false)
+  })
+
+  // Дублікатом є пара, а не адреса: той самий ключ може і переказувати токен,
+  // і бути авторитетом емісії, і ці два надходження розрізняються способом.
+  it('takes one address arriving two ways as two sources, not a duplicate', () => {
+    expect(
+      rewardNetworkSchema.safeParse({
+        ...hivemapper,
+        payoutSources: [
+          { kind: 'mint', address: SOURCE_A },
+          { kind: 'transfer', address: SOURCE_A },
+        ],
+      }).success,
+    ).toBe(true)
   })
 
   it('rejects an unknown payout cadence', () => {
@@ -88,7 +138,7 @@ describe('parseRewardNetworks', () => {
       ...hivemapper,
       id: 'grass',
       displayName: 'Grass',
-      distributors: [DISTRIBUTOR_D],
+      payoutSources: [{ kind: 'transfer', address: SOURCE_D }],
     }
 
     expect(parseRewardNetworks([hivemapper, helium, grass]).size).toBe(3)
@@ -100,10 +150,24 @@ describe('parseRewardNetworks', () => {
     )
   })
 
-  it('rejects one distributor shared by two networks, which would make a payout ambiguous', () => {
+  it('rejects one source shared by two networks, which would make a payout ambiguous', () => {
     expect(() =>
-      parseRewardNetworks([hivemapper, { ...helium, distributors: [DISTRIBUTOR_A] }]),
-    ).toThrow(new RegExp(DISTRIBUTOR_A))
+      parseRewardNetworks([
+        hivemapper,
+        { ...helium, payoutSources: [{ kind: 'mint', address: SOURCE_A }] },
+      ]),
+    ).toThrow(new RegExp(SOURCE_A))
+  })
+
+  // Та сама адреса під різними видами двозначності не створює: класифікатор
+  // звіряє пару, тож надходження однаково впізнається однією мережею.
+  it('allows two networks to name one address if it reaches them differently', () => {
+    expect(
+      parseRewardNetworks([
+        hivemapper,
+        { ...helium, payoutSources: [{ kind: 'transfer', address: SOURCE_A }] },
+      ]).size,
+    ).toBe(2)
   })
 
   it('rejects an empty list: a build with no supported network is a misconfiguration', () => {

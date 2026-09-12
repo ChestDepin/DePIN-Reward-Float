@@ -27,8 +27,8 @@ import {
 const WALLET = solanaAddressSchema.parse('4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy')
 const HONEY_MINT = solanaAddressSchema.parse('2RZMt9LwzUzSUNfprdLSUF33gS2Y3EJL3jqN6g6a9oP1')
 const HNT_MINT = solanaAddressSchema.parse('3mqvZ478SVFftqm6Pmh14SdUhUHuaG7KkKqaBDqNZADs')
-const HONEY_SENDER = solanaAddressSchema.parse('G55iQCAVJt13mvYADJcqUddM3cpXEx5i94L54R6VgUz7')
-const HNT_SENDER = solanaAddressSchema.parse('9axh44i2g6U3q4KZxG9ieH4Z8Khx4N8npn4hWotr8zeZ')
+const HONEY_SOURCE = solanaAddressSchema.parse('G55iQCAVJt13mvYADJcqUddM3cpXEx5i94L54R6VgUz7')
+const HNT_SOURCE = solanaAddressSchema.parse('9axh44i2g6U3q4KZxG9ieH4Z8Khx4N8npn4hWotr8zeZ')
 
 const SIGNATURES = [
   'mHhyPe2Am14FUfW89ak1Hut2cALVwKTtK3iKxomPkpamC7B17HTknFAgoSwT7zpz3shFoXhugio8pjPb9eRS6Ca',
@@ -41,7 +41,7 @@ const HIVEMAPPER = rewardNetworkSchema.parse({
   id: 'test-hivemapper',
   displayName: 'Hivemapper',
   token: { mint: HONEY_MINT, symbol: 'HONEY', decimals: 9 },
-  distributors: [HONEY_SENDER],
+  payoutSources: [{ kind: 'mint', address: HONEY_SOURCE }],
   payoutCadence: 'weekly',
 })
 
@@ -49,7 +49,7 @@ const HELIUM = rewardNetworkSchema.parse({
   id: 'test-helium',
   displayName: 'Helium',
   token: { mint: HNT_MINT, symbol: 'HNT', decimals: 8 },
-  distributors: [HNT_SENDER],
+  payoutSources: [{ kind: 'transfer', address: HNT_SOURCE }],
   payoutCadence: 'daily',
 })
 
@@ -68,7 +68,7 @@ const payout = (
     signature,
     wallet: WALLET,
     networkId: network.id,
-    distributor: network.distributors[0] ?? HONEY_SENDER,
+    source: network.payoutSources[0]?.address ?? HONEY_SOURCE,
     amount,
     slot: 442_918_004n,
     blockTime: new Date(blockTime),
@@ -110,7 +110,7 @@ describe('buildPayoutHistory', () => {
     expect(block?.payouts).toEqual([
       {
         signature: SIGNATURES[0],
-        distributor: HONEY_SENDER,
+        source: HONEY_SOURCE,
         amount: '1000000000',
         valueUsd: '2000000',
         slot: '442918004',
@@ -324,7 +324,7 @@ describe.skipIf(url === undefined)('createDbPayoutHistorySource against a live p
       tokenMint: HONEY_MINT,
       tokenSymbol: 'HONEY',
       tokenDecimals: 9,
-      distributors: [HONEY_SENDER],
+      payoutSources: [{ kind: 'mint', address: HONEY_SOURCE }],
       payoutCadence: 'weekly',
     })
     await db.insert(payouts).values([

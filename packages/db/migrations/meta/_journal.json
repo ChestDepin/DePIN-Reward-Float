@@ -8,6 +8,20 @@
       "when": 1788118732852,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788185263867,
+      "tag": "0001_payout_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788185271429,
+      "tag": "0002_drop_distributors",
+      "breakpoints": true
     }
   ]
 }

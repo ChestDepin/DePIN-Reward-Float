@@ -1,4 +1,4 @@
-import { PAYOUT_CADENCES, type SolanaAddress } from '@drf/shared/schemas'
+import { PAYOUT_CADENCES, type PayoutSource, type SolanaAddress } from '@drf/shared/schemas'
 import { sql } from 'drizzle-orm'
 import {
   bigint,
@@ -41,7 +41,10 @@ export const networks = pgTable('networks', {
   tokenMint: address('token_mint').notNull(),
   tokenSymbol: text('token_symbol').notNull(),
   tokenDecimals: smallint('token_decimals').notNull(),
-  distributors: text('distributors').array().$type<SolanaAddress[]>().notNull(),
+  // Не масив адрес: джерело виплати — пара «вид і адреса», бо винагорода
+  // приходить або переказом від розподільника, або емісією авторитета мінта
+  // (FR-002), і самої адреси замало, щоб їх розрізнити.
+  payoutSources: jsonb('payout_sources').$type<PayoutSource[]>().notNull(),
   payoutCadence: payoutCadenceEnum('payout_cadence').notNull(),
 })
 
@@ -53,7 +56,7 @@ export const payouts = pgTable(
     networkId: text('network_id')
       .notNull()
       .references(() => networks.id),
-    distributor: address('distributor').notNull(),
+    source: address('source').notNull(),
     amount: baseUnits('amount').notNull(),
     slot: bigint('slot', { mode: 'bigint' }).notNull(),
     blockTime: moment('block_time').notNull(),

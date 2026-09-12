@@ -1,4 +1,4 @@
-import type { RewardNetwork, SolanaAddress } from '@drf/shared/schemas'
+import type { PayoutSourceKind, RewardNetwork, SolanaAddress } from '@drf/shared/schemas'
 import { solanaAddressSchema } from '@drf/shared/schemas'
 import {
   classifyTransfer,
@@ -28,14 +28,37 @@ const tokenBalanceSchema = z.object({
   uiTokenAmount: z.object({ amount: z.string().regex(/^\d+$/) }),
 })
 
+// Емісія не рухає жодного балансу вниз, тож джерело в неї читається тільки з
+// інструкції. `parsed` — це те, що видав парсер конкретної програми, і об'єктом
+// воно буває не завжди: memo кладе туди голий рядок. Тому форма звіряється там,
+// де читається, а не тут.
+const instructionSchema = z.object({ parsed: z.unknown().optional() })
+
+const MINT_INSTRUCTION_TYPES = ['mintTo', 'mintToChecked'] as const
+
+const mintInstructionSchema = z.object({
+  type: z.enum(MINT_INSTRUCTION_TYPES),
+  // `looseObject`, бо авторитет читається наступною схемою з того самого
+  // об'єкта: звичайний `object` зрізав би його ще до перевірки.
+  info: z.looseObject({ mint: solanaAddressSchema }),
+})
+
+const mintAuthoritySchema = z.object({ mintAuthority: solanaAddressSchema })
+
 const transactionSchema = z.object({
   slot: z.number().int().nonnegative(),
   blockTime: z.number().int().nullable(),
+  transaction: z
+    .object({ message: z.object({ instructions: z.array(instructionSchema).default([]) }) })
+    .optional(),
   meta: z
     .object({
       err: z.unknown().optional(),
       preTokenBalances: z.array(tokenBalanceSchema).default([]),
       postTokenBalances: z.array(tokenBalanceSchema).default([]),
+      innerInstructions: z
+        .array(z.object({ instructions: z.array(instructionSchema).default([]) }))
+        .default([]),
     })
     .nullable(),
 })
@@ -92,6 +115,33 @@ function balanceDeltas(
   return byMint
 }
 
+type Instruction = z.infer<typeof instructionSchema>
+
+// Авторитет один на всю виплату, але інструкцій може бути кілька: Hivemapper
+// карбує окремо частку водія і частку фліт-менеджера. Тому саме множина
+// авторитетів, а не список карбувань.
+function mintsOf(
+  instructions: readonly Instruction[],
+  mint: string,
+): { authorities: SolanaAddress[]; unattributed: boolean } {
+  const authorities = new Set<SolanaAddress>()
+  let unattributed = false
+
+  for (const instruction of instructions) {
+    const parsed = mintInstructionSchema.safeParse(instruction.parsed)
+    if (!parsed.success || parsed.data.info.mint !== mint) continue
+
+    // Карбування є, а авторитета вузол не назвав — багатопідписний мінт віддає
+    // інше поле. Приписати таке надходження нікому, і мовчазна здогадка тут
+    // коштувала б завищеного ліміту.
+    const authority = mintAuthoritySchema.safeParse(parsed.data.info)
+    if (authority.success) authorities.add(authority.data.mintAuthority)
+    else unattributed = true
+  }
+
+  return { authorities: [...authorities], unattributed }
+}
+
 export function readIncomingTransfers(
   raw: unknown,
   wallet: SolanaAddress,
@@ -106,23 +156,39 @@ export function readIncomingTransfers(
     transaction.meta.preTokenBalances,
     transaction.meta.postTokenBalances,
   )
+  const instructions = [
+    ...(transaction.transaction?.message.instructions ?? []),
+    ...transaction.meta.innerInstructions.flatMap((inner) => inner.instructions),
+  ]
   const transfers: TokenTransfer[] = []
 
   for (const [mint, owners] of deltas) {
     const received = owners.get(wallet) ?? 0n
     if (received <= 0n) continue
 
-    const senders = [...owners].filter(([owner, delta]) => owner !== wallet && delta < 0n)
+    const mints = mintsOf(instructions, mint)
+    if (mints.unattributed) continue
 
-    // Двоє відправників того самого токена в одній транзакції роблять джерело
-    // неоднозначним, а FR-002 розпізнає виплату саме за джерелом.
-    const sender = senders.length === 1 ? senders[0] : undefined
-    if (sender === undefined) continue
+    // Джерело тут ще рядок з відповіді вузла: брендованою адресою воно стає
+    // на `tokenTransferSchema.parse`, як і решта полів.
+    const candidates: { via: PayoutSourceKind; source: string }[] = [
+      ...[...owners]
+        .filter(([owner, delta]) => owner !== wallet && delta < 0n)
+        .map(([owner]) => ({ via: 'transfer' as const, source: owner })),
+      ...mints.authorities.map((source) => ({ via: 'mint' as const, source })),
+    ]
+
+    // Два джерела того самого токена в одній транзакції роблять надходження
+    // неоднозначним, а FR-002 розпізнає виплату саме за джерелом. Переказ
+    // разом із емісією — такий самий випадок, як двоє відправників.
+    const only = candidates.length === 1 ? candidates[0] : undefined
+    if (only === undefined) continue
 
     transfers.push(
       tokenTransferSchema.parse({
         signature,
-        source: sender[0],
+        via: only.via,
+        source: only.source,
         destination: wallet,
         mint,
         amount: received.toString(),

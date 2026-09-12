@@ -51,10 +51,11 @@ describe('schema', () => {
 })
 
 describe('networks', () => {
-  it('describes a network as data: token, distributors, cadence', () => {
+  it('describes a network as data: token, payout sources, cadence', () => {
     expect(primaryKeyOf(networks)).toEqual(['id'])
     expect(columnOf(networks, 'token_mint').notNull).toBe(true)
-    expect(columnOf(networks, 'distributors').getSQLType()).toBe('text[]')
+    // jsonb, а не text[]: у джерелі виплати є вид, і масив адрес його загубив би.
+    expect(columnOf(networks, 'payout_sources').getSQLType()).toBe('jsonb')
   })
 
   it('takes the cadences from the shared description, not a second list', () => {
@@ -67,8 +68,8 @@ describe('payouts', () => {
     expect(primaryKeyOf(payouts)).toEqual(['signature', 'wallet'])
   })
 
-  it('records the source of the transfer, which is what makes it a reward', () => {
-    expect(columnOf(payouts, 'distributor').notNull).toBe(true)
+  it('records the source of the arrival, which is what makes it a reward', () => {
+    expect(columnOf(payouts, 'source').notNull).toBe(true)
     expect(columnOf(payouts, 'network_id').notNull).toBe(true)
   })
 

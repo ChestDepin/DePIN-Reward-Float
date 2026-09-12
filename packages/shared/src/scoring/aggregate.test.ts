@@ -7,7 +7,7 @@ import { calendarDaySchema, type PriceSeries, priceUsdSchema } from './price.ts'
 
 const HONEY_MINT = 'B55r1aQEJhL8xba9ncHHrY7w2tsykbtewac2uYUmgLyP'
 const HNT_MINT = 'Da5nJidcBhY7Ae6qCJTkJ3yDeGJkMjhURA5Ny9QEDTne'
-const HIVEMAPPER_DISTRIBUTOR = 'G55iQCAVJt13mvYADJcqUddM3cpXEx5i94L54R6VgUz7'
+const HIVEMAPPER_AUTHORITY = 'G55iQCAVJt13mvYADJcqUddM3cpXEx5i94L54R6VgUz7'
 const HELIUM_DISTRIBUTOR = 'GqzFuskZTGHjVWKFid1J45FfbWYWCikuHnjP1viPrUx'
 const OPERATOR = '61G2U72VLHjSsAvTArQwb2Wg7vaVkVoEzPN8sdgxBLde'
 
@@ -16,14 +16,14 @@ const networks = parseRewardNetworks([
     id: 'hivemapper',
     displayName: 'Hivemapper',
     token: { mint: HONEY_MINT, symbol: 'HONEY', decimals: 9 },
-    distributors: [HIVEMAPPER_DISTRIBUTOR],
+    payoutSources: [{ kind: 'mint', address: HIVEMAPPER_AUTHORITY }],
     payoutCadence: 'weekly',
   },
   {
     id: 'helium',
     displayName: 'Helium',
     token: { mint: HNT_MINT, symbol: 'HNT', decimals: 8 },
-    distributors: [HELIUM_DISTRIBUTOR],
+    payoutSources: [{ kind: 'transfer', address: HELIUM_DISTRIBUTOR }],
     payoutCadence: 'daily',
   },
 ])
@@ -32,7 +32,7 @@ const hivemapper = networks.get('hivemapper')
 if (hivemapper === undefined) throw new Error('fixture network is missing')
 
 const wallet = solanaAddressSchema.parse(OPERATOR)
-const distributor = solanaAddressSchema.parse(HIVEMAPPER_DISTRIBUTOR)
+const source = solanaAddressSchema.parse(HIVEMAPPER_AUTHORITY)
 
 let nextSignature = 0
 
@@ -42,7 +42,7 @@ const payout = (at: string, tokens: string, networkId = 'hivemapper'): Recognise
     signature: `signature-${nextSignature}`,
     wallet,
     networkId,
-    distributor,
+    source,
     amount: BigInt(tokens),
     slot: 442_918_004n,
     blockTime: new Date(at),
