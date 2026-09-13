@@ -63,7 +63,26 @@ const transactionSchema = z.object({
     .nullable(),
 })
 
+// Виплата приходить у токен-акаунт, і в транзакції емісії адреси гаманця немає
+// взагалі — вузол перелічує таку транзакцію тільки за акаунтом. Тому історія
+// читається за акаунтами оператора, а не за його гаманцем.
+const tokenAccountsSchema = z.object({
+  value: z.array(
+    z.object({
+      pubkey: solanaAddressSchema,
+      account: z.object({
+        data: z.object({
+          parsed: z.object({
+            info: z.object({ mint: solanaAddressSchema, owner: solanaAddressSchema }),
+          }),
+        }),
+      }),
+    }),
+  ),
+})
+
 export type SolanaRpc = {
+  listTokenAccounts(input: { owner: SolanaAddress; mint: SolanaAddress }): Promise<unknown>
   listSignatures(input: {
     address: SolanaAddress
     before: string | null
@@ -72,13 +91,26 @@ export type SolanaRpc = {
   getTransaction(signature: string): Promise<unknown>
 }
 
+// Курсор належить акаунту, а не гаманцю: акаунти перелічуються різними
+// списками, і сигнатура, на якій скінчився один, у списку іншого не буває.
+export type TokenAccountCursor = {
+  tokenAccount: SolanaAddress
+  lastSignature: string
+  lastSlot: bigint
+}
+
+export type IndexPayoutsResult = {
+  payouts: RecognisedPayout[]
+  cursors: TokenAccountCursor[]
+}
+
 export type IndexPayoutsInput = {
   wallet: SolanaAddress
   networks: ReadonlyMap<string, RewardNetwork>
   rpc: SolanaRpc
   now: Date
   pageSize?: number
-  until?: string | null
+  until?: ReadonlyMap<string, string>
 }
 
 function failed(err: unknown): boolean {
@@ -201,42 +233,103 @@ export function readIncomingTransfers(
   return transfers
 }
 
+type SignatureInfo = z.infer<typeof signatureInfoSchema>
+
+async function listPayoutAccounts(
+  wallet: SolanaAddress,
+  networks: ReadonlyMap<string, RewardNetwork>,
+  rpc: SolanaRpc,
+): Promise<SolanaAddress[]> {
+  const accounts = new Set<SolanaAddress>()
+  const mints = new Set([...networks.values()].map((network) => network.token.mint))
+
+  for (const mint of mints) {
+    const listing = tokenAccountsSchema.parse(await rpc.listTokenAccounts({ owner: wallet, mint }))
+    for (const entry of listing.value) accounts.add(entry.pubkey)
+  }
+
+  return [...accounts]
+}
+
+async function listNewSignatures(
+  rpc: SolanaRpc,
+  address: SolanaAddress,
+  until: string | undefined,
+  windowStart: number,
+  pageSize: number,
+): Promise<SignatureInfo[]> {
+  const infos: SignatureInfo[] = []
+  let before: string | null = null
+
+  for (;;) {
+    const page = signaturePageSchema.parse(
+      await rpc.listSignatures({ address, before, limit: pageSize }),
+    )
+
+    for (const info of page) {
+      if (info.signature === until) return infos
+      if (info.blockTime !== null && info.blockTime * 1000 < windowStart) return infos
+      infos.push(info)
+    }
+
+    const last = page[page.length - 1]
+    if (last === undefined || page.length < pageSize) return infos
+    before = last.signature
+  }
+}
+
 export async function indexPayouts({
   wallet,
   networks,
   rpc,
   now,
   pageSize = SIGNATURE_PAGE_SIZE,
-  until = null,
-}: IndexPayoutsInput): Promise<RecognisedPayout[]> {
+  until = new Map(),
+}: IndexPayoutsInput): Promise<IndexPayoutsResult> {
   const windowStart = historyWindowStart(now).getTime()
-  const payouts: RecognisedPayout[] = []
-  let before: string | null = null
+  const cursors: TokenAccountCursor[] = []
+  // Транзакція, що торкнулась двох акаунтів оператора, лежить у двох списках.
+  // Прочитати її двічі — це порахувати виплату двічі й завищити ліміт.
+  const pending = new Map<string, SignatureInfo>()
 
-  for (;;) {
-    const page = signaturePageSchema.parse(
-      await rpc.listSignatures({ address: wallet, before, limit: pageSize }),
-    )
+  for (const account of await listPayoutAccounts(wallet, networks, rpc)) {
+    const infos = await listNewSignatures(rpc, account, until.get(account), windowStart, pageSize)
 
-    for (const info of page) {
-      if (info.signature === until) return payouts
-      if (info.blockTime === null) continue
-      if (info.blockTime * 1000 < windowStart) return payouts
-      if (failed(info.err)) continue
-
-      const raw = await rpc.getTransaction(info.signature)
-      // Вузол може не мати транзакції, яку щойно перелічив, — історію обрізають.
-      // Пропущена виплата занижує ліміт, вигадана завищила б його.
-      if (raw === null) continue
-
-      for (const transfer of readIncomingTransfers(raw, wallet, info.signature)) {
-        const classified = classifyTransfer(transfer, wallet, networks)
-        if (classified.kind === 'payout') payouts.push(classified.payout)
-      }
+    // Прохід, що не знайшов нічого нового, курсора не зсуває: порожній результат
+    // тут означає «від попереднього разу нічого», а не «історії немає».
+    const newest = infos[0]
+    if (newest !== undefined) {
+      cursors.push({
+        tokenAccount: account,
+        lastSignature: newest.signature,
+        lastSlot: BigInt(newest.slot),
+      })
     }
 
-    const last = page[page.length - 1]
-    if (last === undefined || page.length < pageSize) return payouts
-    before = last.signature
+    for (const info of infos) if (!pending.has(info.signature)) pending.set(info.signature, info)
   }
+
+  const payouts: RecognisedPayout[] = []
+  // Порядок акаунтів не має вирішувати порядок виплат: із двох списків виходить
+  // одна історія, і читається вона від найновішої транзакції до найстарішої.
+  const ordered = [...pending.values()].sort(
+    (a, b) => b.slot - a.slot || (a.signature < b.signature ? -1 : 1),
+  )
+
+  for (const info of ordered) {
+    if (info.blockTime === null) continue
+    if (failed(info.err)) continue
+
+    const raw = await rpc.getTransaction(info.signature)
+    // Вузол може не мати транзакції, яку щойно перелічив, — історію обрізають.
+    // Пропущена виплата занижує ліміт, вигадана завищила б його.
+    if (raw === null) continue
+
+    for (const transfer of readIncomingTransfers(raw, wallet, info.signature)) {
+      const classified = classifyTransfer(transfer, wallet, networks)
+      if (classified.kind === 'payout') payouts.push(classified.payout)
+    }
+  }
+
+  return { payouts, cursors }
 }

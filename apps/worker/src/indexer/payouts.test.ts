@@ -8,6 +8,8 @@ const HIVEMAPPER_AUTHORITY = 'G55iQCAVJt13mvYADJcqUddM3cpXEx5i94L54R6VgUz7'
 const HELIUM_DISTRIBUTOR = 'GqzFuskZTGHjVWKFid1J45FfbWYWCikuHnjP1viPrUx'
 const OPERATOR = '61G2U72VLHjSsAvTArQwb2Wg7vaVkVoEzPN8sdgxBLde'
 const OPERATOR_TOKEN_ACCOUNT = '2RZMt9LwzUzSUNfprdLSUF33gS2Y3EJL3jqN6g6a9oP1'
+const OPERATOR_HNT_ACCOUNT = '4eMFVUTGYtrBYzKGm3jeX58GoKhno2SR3vuThCNrom4L'
+const OPERATOR_SECOND_HONEY_ACCOUNT = 'JBifZzFnyHf3eZV5pwRAsbJf6M2ebijWVmbWWpczBC13'
 const STRANGER = '9axh44i2g6U3q4KZxG9ieH4Z8Khx4N8npn4hWotr8zeZ'
 const ANOTHER_SENDER = 'DAfMe2NyHFfCgsqa2PgrUaVHouLKmkY7FRdNirhXavLz'
 const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
@@ -16,6 +18,7 @@ const SIGNATURES = [
   'mHhyPe2Am14FUfW89ak1Hut2cALVwKTtK3iKxomPkpamC7B17HTknFAgoSwT7zpz3shFoXhugio8pjPb9eRS6Ca',
   '2WMyoJh7W6GFmv4dA8yiv62VXZSZKUcysyVVGAEp4pYgJsA4yK4mcT8w4QZmeGWExdX1EuNq9gGeMbSGmU6pUaZM',
   '3FSFdDkCqRXTJMTkC8NefDfhPLx3hMEh9M3JSx3YaAxnBQSNnPcLxYNVe6ALkk7DRt82QSVP9SAF8QY3C2bANmcp',
+  '5ubkMKbUzXej87gJBkEQA1uX76Pe3JTSz7tTZVie6867iC8iMzsy82UUJbLk7QzMUhmdZW1yZhbuLTAUCSbL4m4D',
 ] as const
 
 // Так платять насправді: Hivemapper карбує винагороду в мить виплати й
@@ -115,15 +118,44 @@ const transfer = (options: TransactionOptions = {}) =>
 
 type SignatureInfo = { signature: string; slot: number; blockTime: number | null; err?: unknown }
 
-const fakeRpc = (signatures: SignatureInfo[], transactions: Record<string, unknown>) => {
+type FakeChain = {
+  accounts: Record<string, string[]>
+  signatures: Record<string, SignatureInfo[]>
+  transactions: Record<string, unknown>
+}
+
+const fakeRpc = ({ accounts, signatures, transactions }: FakeChain) => {
   const fetched: string[] = []
+  const listed: string[] = []
+  const mintsAsked: string[] = []
 
   return {
     fetched,
+    listed,
+    mintsAsked,
     rpc: {
-      listSignatures: ({ before, limit }: { before: string | null; limit: number }) => {
-        const start = before === null ? 0 : signatures.findIndex((s) => s.signature === before) + 1
-        return Promise.resolve(signatures.slice(start, start + limit))
+      listTokenAccounts: ({ owner, mint }: { owner: string; mint: string }) => {
+        mintsAsked.push(mint)
+        return Promise.resolve({
+          value: (accounts[mint] ?? []).map((pubkey) => ({
+            pubkey,
+            account: { data: { parsed: { info: { mint, owner } } } },
+          })),
+        })
+      },
+      listSignatures: ({
+        address,
+        before,
+        limit,
+      }: {
+        address: string
+        before: string | null
+        limit: number
+      }) => {
+        listed.push(address)
+        const page = signatures[address] ?? []
+        const start = before === null ? 0 : page.findIndex((s) => s.signature === before) + 1
+        return Promise.resolve(page.slice(start, start + limit))
       },
       getTransaction: (signature: string) => {
         fetched.push(signature)
@@ -193,8 +225,9 @@ describe('readIncomingTransfers', () => {
       },
     }
 
-    expect(readIncomingTransfers(emission({ inner: [checked] }), wallet, SIGNATURES[0])[0]?.via)
-      .toBe('mint')
+    expect(
+      readIncomingTransfers(emission({ inner: [checked] }), wallet, SIGNATURES[0])[0]?.via,
+    ).toBe('mint')
   })
 
   // Виплата Hivemapper карбується двічі — водієві та фліт-менеджеру, — і в
@@ -235,7 +268,10 @@ describe('readIncomingTransfers', () => {
   it('reads nothing when the token both arrives by transfer and is minted', () => {
     const transfers = readIncomingTransfers(
       emission({
-        pre: [balance(1, ANOTHER_SENDER, HONEY_MINT, '900'), balance(2, OPERATOR, HONEY_MINT, '10')],
+        pre: [
+          balance(1, ANOTHER_SENDER, HONEY_MINT, '900'),
+          balance(2, OPERATOR, HONEY_MINT, '10'),
+        ],
         post: [
           balance(1, ANOTHER_SENDER, HONEY_MINT, '400'),
           balance(2, OPERATOR, HONEY_MINT, '4510'),
@@ -336,7 +372,11 @@ describe('readIncomingTransfers', () => {
 
   it('reads nothing from a failed transaction', () => {
     expect(
-      readIncomingTransfers(emission({ err: { InstructionError: [0, 'x'] } }), wallet, SIGNATURES[0]),
+      readIncomingTransfers(
+        emission({ err: { InstructionError: [0, 'x'] } }),
+        wallet,
+        SIGNATURES[0],
+      ),
     ).toEqual([])
   })
 
@@ -350,19 +390,45 @@ describe('readIncomingTransfers', () => {
 })
 
 describe('indexPayouts', () => {
+  // Транзакція виплати Hivemapper не називає гаманця оператора взагалі — у
+  // списку акаунтів лежить тільки його токен-акаунт. Пройти по гаманцю означає
+  // не побачити такої виплати ніколи, і саме це ловить перевірка `listed`.
+  it('lists signatures for the token accounts and never for the wallet itself', async () => {
+    const { rpc, listed } = fakeRpc({
+      accounts: { [HONEY_MINT]: [OPERATOR_TOKEN_ACCOUNT], [HNT_MINT]: [OPERATOR_HNT_ACCOUNT] },
+      signatures: {
+        [OPERATOR_TOKEN_ACCOUNT]: [
+          { signature: SIGNATURES[0], slot: 442_918_004, blockTime: AUGUST },
+        ],
+      },
+      transactions: { [SIGNATURES[0]]: emission() },
+    })
+
+    const { payouts } = await indexPayouts({ wallet, networks, rpc, now: NOW })
+
+    expect(payouts).toHaveLength(1)
+    expect(listed).toEqual([OPERATOR_TOKEN_ACCOUNT, OPERATOR_HNT_ACCOUNT])
+    expect(listed).not.toContain(OPERATOR)
+  })
+
   it('walks the pages and returns the recognised payouts', async () => {
-    const { rpc } = fakeRpc(
-      [
-        { signature: SIGNATURES[0], slot: 442_918_004, blockTime: AUGUST },
-        { signature: SIGNATURES[1], slot: 442_000_000, blockTime: AUGUST - 86_400 },
-      ],
-      {
+    const { rpc } = fakeRpc({
+      accounts: { [HONEY_MINT]: [OPERATOR_TOKEN_ACCOUNT], [HNT_MINT]: [OPERATOR_HNT_ACCOUNT] },
+      signatures: {
+        [OPERATOR_TOKEN_ACCOUNT]: [
+          { signature: SIGNATURES[0], slot: 442_918_004, blockTime: AUGUST },
+        ],
+        [OPERATOR_HNT_ACCOUNT]: [
+          { signature: SIGNATURES[1], slot: 442_000_000, blockTime: AUGUST - 86_400 },
+        ],
+      },
+      transactions: {
         [SIGNATURES[0]]: emission(),
         [SIGNATURES[1]]: transfer({ slot: 442_000_000, blockTime: AUGUST - 86_400 }),
       },
-    )
+    })
 
-    const payouts = await indexPayouts({ wallet, networks, rpc, now: NOW, pageSize: 1 })
+    const { payouts } = await indexPayouts({ wallet, networks, rpc, now: NOW, pageSize: 1 })
 
     expect(payouts.map((payout) => payout.networkId)).toEqual(['hivemapper', 'helium'])
     expect(payouts[0]?.amount).toBe(4000n)
@@ -370,93 +436,235 @@ describe('indexPayouts', () => {
     expect(payouts[1]?.source).toBe(HELIUM_DISTRIBUTOR)
   })
 
-  it('ignores the same token minted by a stranger', async () => {
-    const { rpc } = fakeRpc([{ signature: SIGNATURES[0], slot: 1, blockTime: AUGUST }], {
-      [SIGNATURES[0]]: emission({ inner: [mintTo(STRANGER, HONEY_MINT, '4000')] }),
+  // Одного мінта на кількох токен-акаунтах вистачає, щоб та сама транзакція
+  // потрапила у два списки. Прочитати її двічі означає порахувати виплату двічі
+  // і завищити ліміт — помилка, яка не падає, а тихо додає грошей.
+  it('reads a transaction once when two token accounts both list it', async () => {
+    const { rpc, fetched } = fakeRpc({
+      accounts: { [HONEY_MINT]: [OPERATOR_TOKEN_ACCOUNT, OPERATOR_SECOND_HONEY_ACCOUNT] },
+      signatures: {
+        [OPERATOR_TOKEN_ACCOUNT]: [
+          { signature: SIGNATURES[0], slot: 442_918_004, blockTime: AUGUST },
+        ],
+        [OPERATOR_SECOND_HONEY_ACCOUNT]: [
+          { signature: SIGNATURES[0], slot: 442_918_004, blockTime: AUGUST },
+        ],
+      },
+      transactions: { [SIGNATURES[0]]: emission() },
     })
 
-    expect(await indexPayouts({ wallet, networks, rpc, now: NOW })).toEqual([])
+    const { payouts } = await indexPayouts({ wallet, networks, rpc, now: NOW })
+
+    expect(fetched).toEqual([SIGNATURES[0]])
+    expect(payouts).toHaveLength(1)
+  })
+
+  it('asks for the token accounts of every supported mint', async () => {
+    const { rpc, mintsAsked } = fakeRpc({ accounts: {}, signatures: {}, transactions: {} })
+
+    const { payouts } = await indexPayouts({ wallet, networks, rpc, now: NOW })
+
+    expect(mintsAsked).toEqual([HONEY_MINT, HNT_MINT])
+    expect(payouts).toEqual([])
+  })
+
+  it('returns nothing for an operator holding no token account at all', async () => {
+    const { rpc, listed } = fakeRpc({ accounts: {}, signatures: {}, transactions: {} })
+
+    const { payouts, cursors } = await indexPayouts({ wallet, networks, rpc, now: NOW })
+
+    expect(payouts).toEqual([])
+    expect(cursors).toEqual([])
+    expect(listed).toEqual([])
+  })
+
+  it('ignores the same token minted by a stranger', async () => {
+    const { rpc } = fakeRpc({
+      accounts: { [HONEY_MINT]: [OPERATOR_TOKEN_ACCOUNT] },
+      signatures: {
+        [OPERATOR_TOKEN_ACCOUNT]: [{ signature: SIGNATURES[0], slot: 1, blockTime: AUGUST }],
+      },
+      transactions: {
+        [SIGNATURES[0]]: emission({ inner: [mintTo(STRANGER, HONEY_MINT, '4000')] }),
+      },
+    })
+
+    expect((await indexPayouts({ wallet, networks, rpc, now: NOW })).payouts).toEqual([])
   })
 
   it('ignores the same token sent by a stranger', async () => {
-    const { rpc } = fakeRpc([{ signature: SIGNATURES[0], slot: 1, blockTime: AUGUST }], {
-      [SIGNATURES[0]]: transfer({
-        pre: [balance(1, STRANGER, HNT_MINT, '900'), balance(2, OPERATOR, HNT_MINT, '10')],
-        post: [balance(1, STRANGER, HNT_MINT, '400'), balance(2, OPERATOR, HNT_MINT, '510')],
-      }),
+    const { rpc } = fakeRpc({
+      accounts: { [HNT_MINT]: [OPERATOR_HNT_ACCOUNT] },
+      signatures: {
+        [OPERATOR_HNT_ACCOUNT]: [{ signature: SIGNATURES[0], slot: 1, blockTime: AUGUST }],
+      },
+      transactions: {
+        [SIGNATURES[0]]: transfer({
+          pre: [balance(1, STRANGER, HNT_MINT, '900'), balance(2, OPERATOR, HNT_MINT, '10')],
+          post: [balance(1, STRANGER, HNT_MINT, '400'), balance(2, OPERATOR, HNT_MINT, '510')],
+        }),
+      },
     })
 
-    expect(await indexPayouts({ wallet, networks, rpc, now: NOW })).toEqual([])
+    expect((await indexPayouts({ wallet, networks, rpc, now: NOW })).payouts).toEqual([])
   })
 
   it('stops at the twelve-month boundary and does not read older transactions', async () => {
-    const { rpc, fetched } = fakeRpc(
-      [
-        { signature: SIGNATURES[0], slot: 442_918_004, blockTime: AUGUST },
-        { signature: SIGNATURES[1], slot: 300_000_000, blockTime: A_YEAR_AND_A_HALF_AGO },
-        { signature: SIGNATURES[2], slot: 299_000_000, blockTime: A_YEAR_AND_A_HALF_AGO - 86_400 },
-      ],
-      {
+    const { rpc, fetched } = fakeRpc({
+      accounts: { [HONEY_MINT]: [OPERATOR_TOKEN_ACCOUNT] },
+      signatures: {
+        [OPERATOR_TOKEN_ACCOUNT]: [
+          { signature: SIGNATURES[0], slot: 442_918_004, blockTime: AUGUST },
+          { signature: SIGNATURES[1], slot: 300_000_000, blockTime: A_YEAR_AND_A_HALF_AGO },
+          {
+            signature: SIGNATURES[2],
+            slot: 299_000_000,
+            blockTime: A_YEAR_AND_A_HALF_AGO - 86_400,
+          },
+        ],
+      },
+      transactions: {
         [SIGNATURES[0]]: emission(),
         [SIGNATURES[1]]: emission({ blockTime: A_YEAR_AND_A_HALF_AGO }),
         [SIGNATURES[2]]: emission({ blockTime: A_YEAR_AND_A_HALF_AGO - 86_400 }),
       },
-    )
+    })
 
-    const payouts = await indexPayouts({ wallet, networks, rpc, now: NOW, pageSize: 1 })
+    const { payouts } = await indexPayouts({ wallet, networks, rpc, now: NOW, pageSize: 1 })
 
     expect(payouts).toHaveLength(1)
     expect(fetched).toEqual([SIGNATURES[0]])
   })
 
   it('does not read a failed transaction at all', async () => {
-    const { rpc, fetched } = fakeRpc(
-      [
-        {
-          signature: SIGNATURES[0],
-          slot: 1,
-          blockTime: AUGUST,
-          err: { InstructionError: [0, 'x'] },
-        },
-      ],
-      { [SIGNATURES[0]]: emission() },
-    )
+    const { rpc, fetched } = fakeRpc({
+      accounts: { [HONEY_MINT]: [OPERATOR_TOKEN_ACCOUNT] },
+      signatures: {
+        [OPERATOR_TOKEN_ACCOUNT]: [
+          {
+            signature: SIGNATURES[0],
+            slot: 1,
+            blockTime: AUGUST,
+            err: { InstructionError: [0, 'x'] },
+          },
+        ],
+      },
+      transactions: { [SIGNATURES[0]]: emission() },
+    })
 
-    expect(await indexPayouts({ wallet, networks, rpc, now: NOW })).toEqual([])
+    expect((await indexPayouts({ wallet, networks, rpc, now: NOW })).payouts).toEqual([])
     expect(fetched).toEqual([])
   })
 
   it('skips a signature the node no longer has a transaction for', async () => {
-    const { rpc } = fakeRpc([{ signature: SIGNATURES[0], slot: 1, blockTime: AUGUST }], {})
+    const { rpc } = fakeRpc({
+      accounts: { [HONEY_MINT]: [OPERATOR_TOKEN_ACCOUNT] },
+      signatures: {
+        [OPERATOR_TOKEN_ACCOUNT]: [{ signature: SIGNATURES[0], slot: 1, blockTime: AUGUST }],
+      },
+      transactions: {},
+    })
 
-    expect(await indexPayouts({ wallet, networks, rpc, now: NOW })).toEqual([])
+    expect((await indexPayouts({ wallet, networks, rpc, now: NOW })).payouts).toEqual([])
   })
 
-  it('returns nothing for a wallet with no signatures', async () => {
-    const { rpc } = fakeRpc([], {})
+  // Курсор належить акаунту, а не гаманцю: акаунти читаються різними списками,
+  // і сигнатура, на якій скінчився один, у списку іншого не зустрічається.
+  it('stops at the signature the previous pass ended on, account by account', async () => {
+    const { rpc, fetched } = fakeRpc({
+      accounts: { [HONEY_MINT]: [OPERATOR_TOKEN_ACCOUNT], [HNT_MINT]: [OPERATOR_HNT_ACCOUNT] },
+      signatures: {
+        [OPERATOR_TOKEN_ACCOUNT]: [
+          { signature: SIGNATURES[0], slot: 442_918_004, blockTime: AUGUST },
+          { signature: SIGNATURES[1], slot: 442_000_000, blockTime: AUGUST - 86_400 },
+        ],
+        [OPERATOR_HNT_ACCOUNT]: [
+          { signature: SIGNATURES[3], slot: 441_000_000, blockTime: AUGUST - 172_800 },
+        ],
+      },
+      transactions: {
+        [SIGNATURES[0]]: emission(),
+        [SIGNATURES[1]]: emission(),
+        [SIGNATURES[3]]: transfer({ slot: 441_000_000, blockTime: AUGUST - 172_800 }),
+      },
+    })
 
-    expect(await indexPayouts({ wallet, networks, rpc, now: NOW })).toEqual([])
-  })
-
-  it('stops at the signature the previous pass ended on', async () => {
-    const { rpc, fetched } = fakeRpc(
-      [
-        { signature: SIGNATURES[0], slot: 442_918_004, blockTime: AUGUST },
-        { signature: SIGNATURES[1], slot: 442_000_000, blockTime: AUGUST - 86_400 },
-      ],
-      { [SIGNATURES[0]]: emission(), [SIGNATURES[1]]: emission() },
-    )
-
-    const payouts = await indexPayouts({
+    const { payouts } = await indexPayouts({
       wallet,
       networks,
       rpc,
       now: NOW,
       pageSize: 1,
-      until: SIGNATURES[1],
+      until: new Map([[OPERATOR_TOKEN_ACCOUNT, SIGNATURES[1]]]),
     })
 
-    expect(payouts).toHaveLength(1)
-    expect(fetched).toEqual([SIGNATURES[0]])
+    expect(fetched).toEqual([SIGNATURES[0], SIGNATURES[3]])
+    expect(payouts.map((payout) => payout.networkId)).toEqual(['hivemapper', 'helium'])
+  })
+
+  it('reports the newest signature of each account so the next pass can resume', async () => {
+    const { rpc } = fakeRpc({
+      accounts: { [HONEY_MINT]: [OPERATOR_TOKEN_ACCOUNT], [HNT_MINT]: [OPERATOR_HNT_ACCOUNT] },
+      signatures: {
+        [OPERATOR_TOKEN_ACCOUNT]: [
+          { signature: SIGNATURES[0], slot: 442_918_004, blockTime: AUGUST },
+          { signature: SIGNATURES[1], slot: 442_000_000, blockTime: AUGUST - 86_400 },
+        ],
+        [OPERATOR_HNT_ACCOUNT]: [
+          { signature: SIGNATURES[3], slot: 441_000_000, blockTime: AUGUST - 172_800 },
+        ],
+      },
+      transactions: {
+        [SIGNATURES[0]]: emission(),
+        [SIGNATURES[1]]: emission(),
+        [SIGNATURES[3]]: transfer({ slot: 441_000_000, blockTime: AUGUST - 172_800 }),
+      },
+    })
+
+    const { cursors } = await indexPayouts({ wallet, networks, rpc, now: NOW })
+
+    expect(cursors).toEqual([
+      {
+        tokenAccount: OPERATOR_TOKEN_ACCOUNT,
+        lastSignature: SIGNATURES[0],
+        lastSlot: 442_918_004n,
+      },
+      { tokenAccount: OPERATOR_HNT_ACCOUNT, lastSignature: SIGNATURES[3], lastSlot: 441_000_000n },
+    ])
+  })
+
+  // Прохід, що не знайшов нічого нового, не має чим зсувати курсор — і не
+  // повертає його зовсім, щоб той, хто зберігає, лишив попередній на місці.
+  it('reports no cursor for an account with nothing new since the last pass', async () => {
+    const { rpc } = fakeRpc({
+      accounts: { [HONEY_MINT]: [OPERATOR_TOKEN_ACCOUNT] },
+      signatures: {
+        [OPERATOR_TOKEN_ACCOUNT]: [
+          { signature: SIGNATURES[0], slot: 442_918_004, blockTime: AUGUST },
+        ],
+      },
+      transactions: { [SIGNATURES[0]]: emission() },
+    })
+
+    const { payouts, cursors } = await indexPayouts({
+      wallet,
+      networks,
+      rpc,
+      now: NOW,
+      until: new Map([[OPERATOR_TOKEN_ACCOUNT, SIGNATURES[0]]]),
+    })
+
+    expect(payouts).toEqual([])
+    expect(cursors).toEqual([])
+  })
+
+  it('rejects a token account listing that is not one', async () => {
+    const rpc = {
+      listTokenAccounts: () => Promise.resolve({ value: [{ pubkey: 'not an address' }] }),
+      listSignatures: () => Promise.resolve([]),
+      getTransaction: () => Promise.resolve(null),
+    }
+
+    await expect(indexPayouts({ wallet, networks, rpc, now: NOW })).rejects.toThrow()
   })
 })
