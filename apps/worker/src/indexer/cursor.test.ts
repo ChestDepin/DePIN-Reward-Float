@@ -5,7 +5,7 @@ import { solanaAddressSchema } from '@drf/shared/schemas'
 import type { RecognisedPayout } from '@drf/shared/scoring'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { readCursor, recordPass } from './cursor.ts'
+import { readCursors, recordPass } from './cursor.ts'
 
 function databaseUrl(): string | undefined {
   if (process.env.DATABASE_URL !== undefined) return process.env.DATABASE_URL
@@ -32,13 +32,15 @@ const WALLET = solanaAddressSchema.parse('61G2U72VLHjSsAvTArQwb2Wg7vaVkVoEzPN8sd
 const MINT = solanaAddressSchema.parse(HONEY_MINT)
 const SENDER = solanaAddressSchema.parse(DISTRIBUTOR)
 
+const HONEY_ACCOUNT = solanaAddressSchema.parse('FxeY8wpN4MSo44Fap18JefRHm2EfLVsCUVenwk2zB8ef')
+const HNT_ACCOUNT = solanaAddressSchema.parse('BDs6RPnpJNzmuMNv1z8cDh9cxKFgCxEVDaCfoHZWyvqJ')
+
 const FIRST =
   'mHhyPe2Am14FUfW89ak1Hut2cALVwKTtK3iKxomPkpamC7B17HTknFAgoSwT7zpz3shFoXhugio8pjPb9eRS6Ca'
 const SECOND =
   '2WMyoJh7W6GFmv4dA8yiv62VXZSZKUcysyVVGAEp4pYgJsA4yK4mcT8w4QZmeGWExdX1EuNq9gGeMbSGmU6pUaZM'
 
 const ONE = 'test-cursor-one'
-const TWO = 'test-cursor-two'
 
 const payout = (signature: string, networkId: string, amount: bigint): RecognisedPayout => ({
   signature,
@@ -66,31 +68,27 @@ describe.skipIf(url === undefined)('cursor against a live postgres', () => {
 
     await wipe()
     await db.delete(networks).where(eq(networks.id, ONE))
-    await db.delete(networks).where(eq(networks.id, TWO))
-    await db.insert(networks).values(
-      [ONE, TWO].map((id) => ({
-        id,
-        displayName: id,
-        tokenMint: MINT,
-        tokenSymbol: 'HONEY',
-        tokenDecimals: 9,
-        payoutSources: [{ kind: 'transfer' as const, address: SENDER }],
-        payoutCadence: 'weekly' as const,
-      })),
-    )
+    await db.insert(networks).values({
+      id: ONE,
+      displayName: ONE,
+      tokenMint: MINT,
+      tokenSymbol: 'HONEY',
+      tokenDecimals: 9,
+      payoutSources: [{ kind: 'transfer' as const, address: SENDER }],
+      payoutCadence: 'weekly' as const,
+    })
   })
 
   afterAll(async () => {
     await wipe()
     await db.delete(networks).where(eq(networks.id, ONE))
-    await db.delete(networks).where(eq(networks.id, TWO))
     await close()
   })
 
   it('has no cursor for a wallet that was never indexed', async () => {
     await wipe()
 
-    expect(await readCursor(db, WALLET, ONE)).toBeNull()
+    expect(await readCursors(db, WALLET)).toEqual(new Map())
   })
 
   it('writes the payouts and the cursor of the pass that found them', async () => {
@@ -98,20 +96,22 @@ describe.skipIf(url === undefined)('cursor against a live postgres', () => {
 
     await recordPass(db, {
       wallet: WALLET,
-      networkIds: [ONE],
       payouts: [payout(FIRST, ONE, 4000n)],
-      lastSignature: FIRST,
-      lastSlot: 442_918_004n,
+      cursors: [{ tokenAccount: HONEY_ACCOUNT, lastSignature: FIRST, lastSlot: 442_918_004n }],
     })
 
     const stored = await db.select().from(payouts).where(eq(payouts.wallet, WALLET))
 
     expect(stored).toHaveLength(1)
     expect(stored[0]?.amount).toBe(4000n)
-    expect(await readCursor(db, WALLET, ONE)).toEqual({
-      lastSignature: FIRST,
-      lastSlot: 442_918_004n,
-    })
+    expect(await readCursors(db, WALLET)).toEqual(
+      new Map([
+        [
+          HONEY_ACCOUNT,
+          { tokenAccount: HONEY_ACCOUNT, lastSignature: FIRST, lastSlot: 442_918_004n },
+        ],
+      ]),
+    )
   })
 
   it('adds nothing on a repeat pass over the same signatures', async () => {
@@ -119,10 +119,8 @@ describe.skipIf(url === undefined)('cursor against a live postgres', () => {
 
     const pass = {
       wallet: WALLET,
-      networkIds: [ONE],
       payouts: [payout(FIRST, ONE, 4000n), payout(SECOND, ONE, 500n)],
-      lastSignature: FIRST,
-      lastSlot: 442_918_004n,
+      cursors: [{ tokenAccount: HONEY_ACCOUNT, lastSignature: FIRST, lastSlot: 442_918_004n }],
     }
 
     await recordPass(db, pass)
@@ -136,17 +134,13 @@ describe.skipIf(url === undefined)('cursor against a live postgres', () => {
 
     await recordPass(db, {
       wallet: WALLET,
-      networkIds: [ONE],
       payouts: [payout(FIRST, ONE, 4000n)],
-      lastSignature: FIRST,
-      lastSlot: 442_918_004n,
+      cursors: [{ tokenAccount: HONEY_ACCOUNT, lastSignature: FIRST, lastSlot: 442_918_004n }],
     })
     await recordPass(db, {
       wallet: WALLET,
-      networkIds: [ONE],
       payouts: [payout(FIRST, ONE, 999n)],
-      lastSignature: FIRST,
-      lastSlot: 442_918_004n,
+      cursors: [{ tokenAccount: HONEY_ACCOUNT, lastSignature: FIRST, lastSlot: 442_918_004n }],
     })
 
     const stored = await db.select().from(payouts).where(eq(payouts.wallet, WALLET))
@@ -155,32 +149,47 @@ describe.skipIf(url === undefined)('cursor against a live postgres', () => {
     expect(stored[0]?.amount).toBe(4000n)
   })
 
-  it('moves the cursor of every network the pass covered', async () => {
+  it('moves each token account to its own signature, not to a shared one', async () => {
     await wipe()
 
     await recordPass(db, {
       wallet: WALLET,
-      networkIds: [ONE, TWO],
       payouts: [],
-      lastSignature: FIRST,
-      lastSlot: 442_918_004n,
+      cursors: [
+        { tokenAccount: HONEY_ACCOUNT, lastSignature: FIRST, lastSlot: 442_918_004n },
+        { tokenAccount: HNT_ACCOUNT, lastSignature: SECOND, lastSlot: 442_919_000n },
+      ],
+    })
+
+    const cursors = await readCursors(db, WALLET)
+
+    expect(cursors.get(HONEY_ACCOUNT)?.lastSignature).toBe(FIRST)
+    expect(cursors.get(HNT_ACCOUNT)?.lastSignature).toBe(SECOND)
+  })
+
+  // Акаунт, у якому нічого нового, курсора з проходу не повертає взагалі, і
+  // збережений курсор має лишитись там, де стояв.
+  it('leaves an account the pass says nothing about where it was', async () => {
+    await wipe()
+
+    await recordPass(db, {
+      wallet: WALLET,
+      payouts: [],
+      cursors: [
+        { tokenAccount: HONEY_ACCOUNT, lastSignature: FIRST, lastSlot: 442_918_004n },
+        { tokenAccount: HNT_ACCOUNT, lastSignature: FIRST, lastSlot: 442_918_004n },
+      ],
     })
     await recordPass(db, {
       wallet: WALLET,
-      networkIds: [ONE, TWO],
       payouts: [],
-      lastSignature: SECOND,
-      lastSlot: 442_919_000n,
+      cursors: [{ tokenAccount: HONEY_ACCOUNT, lastSignature: SECOND, lastSlot: 442_919_000n }],
     })
 
-    expect(await readCursor(db, WALLET, ONE)).toEqual({
-      lastSignature: SECOND,
-      lastSlot: 442_919_000n,
-    })
-    expect(await readCursor(db, WALLET, TWO)).toEqual({
-      lastSignature: SECOND,
-      lastSlot: 442_919_000n,
-    })
+    const cursors = await readCursors(db, WALLET)
+
+    expect(cursors.get(HONEY_ACCOUNT)?.lastSlot).toBe(442_919_000n)
+    expect(cursors.get(HNT_ACCOUNT)?.lastSlot).toBe(442_918_004n)
   })
 
   it('leaves the cursor where it was when a payout cannot be written', async () => {
@@ -188,26 +197,19 @@ describe.skipIf(url === undefined)('cursor against a live postgres', () => {
 
     await recordPass(db, {
       wallet: WALLET,
-      networkIds: [ONE],
       payouts: [payout(FIRST, ONE, 4000n)],
-      lastSignature: FIRST,
-      lastSlot: 442_918_004n,
+      cursors: [{ tokenAccount: HONEY_ACCOUNT, lastSignature: FIRST, lastSlot: 442_918_004n }],
     })
 
     await expect(
       recordPass(db, {
         wallet: WALLET,
-        networkIds: [ONE],
         payouts: [payout(SECOND, 'no-such-network', 500n)],
-        lastSignature: SECOND,
-        lastSlot: 442_919_000n,
+        cursors: [{ tokenAccount: HONEY_ACCOUNT, lastSignature: SECOND, lastSlot: 442_919_000n }],
       }),
     ).rejects.toThrow()
 
-    expect(await readCursor(db, WALLET, ONE)).toEqual({
-      lastSignature: FIRST,
-      lastSlot: 442_918_004n,
-    })
+    expect((await readCursors(db, WALLET)).get(HONEY_ACCOUNT)?.lastSignature).toBe(FIRST)
     expect(await db.select().from(payouts).where(eq(payouts.wallet, WALLET))).toHaveLength(1)
   })
 
@@ -218,16 +220,14 @@ describe.skipIf(url === undefined)('cursor against a live postgres', () => {
 
     await recordPass(db, {
       wallet: WALLET,
-      networkIds: [ONE],
       payouts: [],
-      lastSignature: FIRST,
-      lastSlot: 442_918_004n,
+      cursors: [{ tokenAccount: HONEY_ACCOUNT, lastSignature: FIRST, lastSlot: 442_918_004n }],
     })
 
-    expect(await readCursor(db, other, ONE)).toBeNull()
+    expect(await readCursors(db, other)).toEqual(new Map())
 
     await db
       .delete(indexerCursors)
-      .where(and(eq(indexerCursors.wallet, WALLET), eq(indexerCursors.networkId, ONE)))
+      .where(and(eq(indexerCursors.wallet, WALLET), eq(indexerCursors.tokenAccount, HONEY_ACCOUNT)))
   })
 })

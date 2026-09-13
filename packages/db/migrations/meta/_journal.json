@@ -29,6 +29,20 @@
       "when": 1788186176059,
       "tag": "0003_on_demand_cadence",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788190215122,
+      "tag": "0004_cursor_token_account",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788190233946,
+      "tag": "0005_drop_cursor_network",
+      "breakpoints": true
     }
   ]
 }

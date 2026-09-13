@@ -132,12 +132,13 @@ export const indexerCursors = pgTable(
   'indexer_cursors',
   {
     wallet: address('wallet').notNull(),
-    networkId: text('network_id')
-      .notNull()
-      .references(() => networks.id),
-    lastSignature: text('last_signature'),
-    lastSlot: bigint('last_slot', { mode: 'bigint' }),
+    // Виплата приходить у токен-акаунт, і акаунти оператора перелічуються
+    // різними списками підписів: сигнатура, на якій скінчився один, у списку
+    // іншого не буває, тож курсор належить акаунту, а не мережі.
+    tokenAccount: address('token_account').notNull(),
+    lastSignature: text('last_signature').notNull(),
+    lastSlot: bigint('last_slot', { mode: 'bigint' }).notNull(),
     updatedAt: moment('updated_at').notNull().defaultNow(),
   },
-  (table) => [primaryKey({ columns: [table.wallet, table.networkId] })],
+  (table) => [primaryKey({ columns: [table.wallet, table.tokenAccount] })],
 )

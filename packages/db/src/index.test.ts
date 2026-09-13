@@ -81,6 +81,8 @@ describe('migrations', () => {
         { idx: 1, tag: '0001_payout_sources' },
         { idx: 2, tag: '0002_drop_distributors' },
         { idx: 3, tag: '0003_on_demand_cadence' },
+        { idx: 4, tag: '0004_cursor_token_account' },
+        { idx: 5, tag: '0005_drop_cursor_network' },
       ],
     })
   })
@@ -95,5 +97,22 @@ describe('migrations', () => {
     expect(added).toContain('"source" text NOT NULL')
     expect(dropped).toContain('DROP COLUMN "distributors"')
     expect(dropped).toContain('DROP COLUMN "distributor"')
+  })
+
+  // Курсор не перенесений, а перекладений на інший ключ: мережі в ньому більше
+  // немає, а таблиця порожня, тож переносити не було чого.
+  it('rekeys the cursor to the token account in two steps', () => {
+    const added = readFileSync(
+      path.join(MIGRATIONS_FOLDER, '0004_cursor_token_account.sql'),
+      'utf8',
+    )
+    const dropped = readFileSync(
+      path.join(MIGRATIONS_FOLDER, '0005_drop_cursor_network.sql'),
+      'utf8',
+    )
+
+    expect(added).toContain('"token_account" text NOT NULL')
+    expect(added).toContain('PRIMARY KEY("wallet","token_account")')
+    expect(dropped).toContain('DROP COLUMN "network_id"')
   })
 })

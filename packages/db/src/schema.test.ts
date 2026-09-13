@@ -144,12 +144,14 @@ describe('attestations', () => {
 })
 
 describe('indexer_cursors', () => {
-  it('is one cursor per wallet per network', () => {
-    expect(primaryKeyOf(indexerCursors)).toEqual(['wallet', 'network_id'])
+  // Акаунти перелічуються різними списками, і сигнатура, на якій скінчився
+  // один, у списку іншого не буває.
+  it('is one cursor per token account, not per network', () => {
+    expect(primaryKeyOf(indexerCursors)).toEqual(['wallet', 'token_account'])
   })
 
-  it('has no signature before the first pass', () => {
-    expect(columnOf(indexerCursors, 'last_signature').notNull).toBe(false)
-    expect(columnOf(indexerCursors, 'last_slot').notNull).toBe(false)
+  it('has no row without the signature it stopped at', () => {
+    expect(columnOf(indexerCursors, 'last_signature').notNull).toBe(true)
+    expect(columnOf(indexerCursors, 'last_slot').notNull).toBe(true)
   })
 })

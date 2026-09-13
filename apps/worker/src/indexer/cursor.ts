@@ -1,35 +1,31 @@
 import { type Database, indexerCursors, payouts } from '@drf/db'
 import type { SolanaAddress } from '@drf/shared/schemas'
 import type { RecognisedPayout } from '@drf/shared/scoring'
-import { and, eq } from 'drizzle-orm'
-
-export type IndexerCursor = {
-  lastSignature: string | null
-  lastSlot: bigint | null
-}
+import { eq } from 'drizzle-orm'
+import type { TokenAccountCursor } from './payouts.ts'
 
 export type IndexPass = {
   wallet: SolanaAddress
-  // Сигнатури гаманця — один потік на всі мережі, тож прохід зсуває курсор
-  // кожної мережі, яку він покривав, а не тільки тієї, де знайшлась виплата.
-  networkIds: readonly string[]
   payouts: readonly RecognisedPayout[]
-  lastSignature: string | null
-  lastSlot: bigint | null
+  cursors: readonly TokenAccountCursor[]
 }
 
-export async function readCursor(
+// Курсори читаються всі разом: акаунти оператора знаходить сам прохід, і той,
+// хто його починає, ще не знає, за якими акаунтами питати.
+export async function readCursors(
   db: Database,
   wallet: SolanaAddress,
-  networkId: string,
-): Promise<IndexerCursor | null> {
-  const [row] = await db
-    .select({ lastSignature: indexerCursors.lastSignature, lastSlot: indexerCursors.lastSlot })
+): Promise<Map<SolanaAddress, TokenAccountCursor>> {
+  const rows = await db
+    .select({
+      tokenAccount: indexerCursors.tokenAccount,
+      lastSignature: indexerCursors.lastSignature,
+      lastSlot: indexerCursors.lastSlot,
+    })
     .from(indexerCursors)
-    .where(and(eq(indexerCursors.wallet, wallet), eq(indexerCursors.networkId, networkId)))
-    .limit(1)
+    .where(eq(indexerCursors.wallet, wallet))
 
-  return row ?? null
+  return new Map(rows.map((row) => [row.tokenAccount, row]))
 }
 
 export async function recordPass(db: Database, pass: IndexPass): Promise<void> {
@@ -43,20 +39,15 @@ export async function recordPass(db: Database, pass: IndexPass): Promise<void> {
         .onConflictDoNothing()
     }
 
-    for (const networkId of pass.networkIds) {
+    for (const cursor of pass.cursors) {
       await tx
         .insert(indexerCursors)
-        .values({
-          wallet: pass.wallet,
-          networkId,
-          lastSignature: pass.lastSignature,
-          lastSlot: pass.lastSlot,
-        })
+        .values({ wallet: pass.wallet, ...cursor })
         .onConflictDoUpdate({
-          target: [indexerCursors.wallet, indexerCursors.networkId],
+          target: [indexerCursors.wallet, indexerCursors.tokenAccount],
           set: {
-            lastSignature: pass.lastSignature,
-            lastSlot: pass.lastSlot,
+            lastSignature: cursor.lastSignature,
+            lastSlot: cursor.lastSlot,
             updatedAt: new Date(),
           },
         })
