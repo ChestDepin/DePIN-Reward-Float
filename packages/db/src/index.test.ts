@@ -83,6 +83,7 @@ describe('migrations', () => {
         { idx: 3, tag: '0003_on_demand_cadence' },
         { idx: 4, tag: '0004_cursor_token_account' },
         { idx: 5, tag: '0005_drop_cursor_network' },
+        { idx: 6, tag: '0006_limit_per_network' },
       ],
     })
   })

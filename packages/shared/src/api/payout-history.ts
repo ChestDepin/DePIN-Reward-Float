@@ -6,7 +6,7 @@ import { calendarDaySchema } from '../scoring/price.ts'
 // Цілі числа їдуть рядками: u64 не вміщається в JSON-число, а bigint у JSON не
 // серіалізується взагалі. Масштаб у кожного свій і читається з сусіднього поля —
 // токен у мінімальних одиницях мережі, вартість у мікродоларах, як `limit_usd`.
-const wholeNumberSchema = z.string().regex(/^\d+$/, 'expected a whole number as a string')
+export const wholeNumberSchema = z.string().regex(/^\d+$/, 'expected a whole number as a string')
 
 export const payoutEntrySchema = z.object({
   signature: z.string(),

@@ -1,6 +1,7 @@
 import { createLogger } from '@drf/shared/log'
 import { solanaAddressSchema } from '@drf/shared/schemas'
 import { describe, expect, it } from 'vitest'
+import type { CreditProfileStore } from './routes/limit.ts'
 import type { PayoutHistorySource } from './routes/operators.ts'
 import { createServer } from './server.ts'
 
@@ -8,9 +9,15 @@ const EMPTY: PayoutHistorySource = {
   read: async () => ({ payouts: [], networks: [], prices: new Map() }),
 }
 
+const NO_PROFILES: CreditProfileStore = {
+  read: async () => [],
+  write: async () => {},
+}
+
 const deps = (logger: ReturnType<typeof createLogger>) => ({
   logger,
   payouts: EMPTY,
+  profiles: NO_PROFILES,
   now: () => new Date('2026-08-31T12:00:00.000Z'),
 })
 
@@ -52,6 +59,16 @@ describe('createServer', () => {
 
     const response = await createServer(deps(capture().logger)).request(
       `/v1/operators/${wallet}/payouts`,
+    )
+
+    expect(response.status).toBe(200)
+  })
+
+  it('mounts the credit limit under /v1 too', async () => {
+    const wallet = solanaAddressSchema.parse('4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy')
+
+    const response = await createServer(deps(capture().logger)).request(
+      `/v1/operators/${wallet}/limit`,
     )
 
     expect(response.status).toBe(200)

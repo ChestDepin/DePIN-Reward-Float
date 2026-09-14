@@ -2,6 +2,7 @@ import { createDatabase } from '@drf/db'
 import { createLogger } from '@drf/shared/log'
 import { serve } from '@hono/node-server'
 import { loadApiConfig } from './config.ts'
+import { createDbCreditProfileStore } from './routes/limit.ts'
 import { createDbPayoutHistorySource } from './routes/operators.ts'
 import { createServer } from './server.ts'
 
@@ -12,6 +13,7 @@ const { db, close } = createDatabase(config.databaseUrl)
 const app = createServer({
   logger,
   payouts: createDbPayoutHistorySource(db),
+  profiles: createDbCreditProfileStore(db),
   now: () => new Date(),
 })
 

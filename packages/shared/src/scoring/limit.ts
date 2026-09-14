@@ -87,7 +87,7 @@ export function priceVolatilityBp(prices: PriceSeries): bigint {
 
 // Вікно закінчується останнім днем періоду, а не останнім днем ряду: інакше ряд,
 // що обірвався три місяці тому, сам оголосив би свою останню ціну недавньою.
-function recentWindow(last: CalendarMonth): DayRange {
+export function recentPriceWindow(last: CalendarMonth): DayRange {
   const endOfMonth = new Date(Date.UTC(Number(last.slice(0, 4)), Number(last.slice(5, 7)), 0))
 
   return {
@@ -116,7 +116,7 @@ export function computeCreditLimit(input: {
   const last = months[months.length - 1]
   if (last === undefined) throw new Error('a limit needs a period of at least one month')
 
-  const window = recentWindow(last.month)
+  const window = recentPriceWindow(last.month)
   const recentPrice = medianQuote(prices, window)
   if (recentPrice === undefined) return { kind: 'no-recent-price', window }
 

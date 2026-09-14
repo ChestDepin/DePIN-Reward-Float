@@ -9,7 +9,7 @@ import {
   toCalendarDay,
 } from './price.ts'
 
-const USD_DECIMALS = 6
+export const USD_DECIMALS = 6
 
 export const calendarMonthSchema = z
   .string()
@@ -32,6 +32,26 @@ export type MonthlyPayouts = {
   // означав би «місяць без виплат», а це інше твердження (FR-004a).
   valueUsd: bigint | null
   daysWithoutPrice: readonly CalendarDay[]
+}
+
+// Дзеркало `formatPriceUsd` для колонок `numeric(20,6)`: у домені вартість —
+// мікродолари цілим числом, у базі — десятковий рядок, і різниця в останньому
+// розряді тут була б різницею в грошах.
+export const usdAmountSchema = z
+  .string()
+  .regex(
+    new RegExp(`^(0|[1-9]\\d*)(\\.\\d{1,${USD_DECIMALS}})?$`),
+    `expected a decimal amount with at most ${USD_DECIMALS} fractional digits`,
+  )
+  .transform((value) => {
+    const [whole, fraction = ''] = value.split('.')
+    return BigInt(`${whole}${fraction.padEnd(USD_DECIMALS, '0')}`)
+  })
+
+export function formatUsd(units: bigint): string {
+  const scale = 10n ** BigInt(USD_DECIMALS)
+
+  return `${units / scale}.${(units % scale).toString().padStart(USD_DECIMALS, '0')}`
 }
 
 export function payoutValueUsd(amount: bigint, decimals: number, price: PriceUsd): bigint {

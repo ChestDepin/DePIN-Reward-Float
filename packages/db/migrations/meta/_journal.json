@@ -43,6 +43,13 @@
       "when": 1788190233946,
       "tag": "0005_drop_cursor_network",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788196741876,
+      "tag": "0006_limit_per_network",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { PayoutCadence } from '../schemas/network.ts'
 import { calendarMonthSchema, type MonthlyPayouts } from './aggregate.ts'
 import { assessEligibility, REQUIRED_PAID_MONTHS } from './eligibility.ts'
 import { calendarDaySchema } from './price.ts'
@@ -41,25 +42,29 @@ const period = (marks: string, over: readonly string[] = TWELVE_MONTHS): Monthly
     }
   })
 
+// Каденція за замовчуванням — push-мережа: ці випадки міряють історію, а не ритм.
+const assess = (months: readonly MonthlyPayouts[], cadence: PayoutCadence = 'weekly') =>
+  assessEligibility({ months, cadence })
+
 describe('assessEligibility', () => {
   it('holds the agreed threshold: six paid months', () => {
     expect(REQUIRED_PAID_MONTHS).toBe(6)
   })
 
   it('passes a wallet paid every month of the period', () => {
-    expect(assessEligibility(period('PPPPPPPPPPPP'))).toEqual({ kind: 'eligible' })
+    expect(assess(period('PPPPPPPPPPPP'))).toEqual({ kind: 'eligible' })
   })
 
   it('passes six paid months that are not in a row', () => {
-    expect(assessEligibility(period('P.P.P.P.P.P.'))).toEqual({ kind: 'eligible' })
+    expect(assess(period('P.P.P.P.P.P.'))).toEqual({ kind: 'eligible' })
   })
 
   it('passes six paid months even when the newest ones are empty', () => {
-    expect(assessEligibility(period('PPPPPP......'))).toEqual({ kind: 'eligible' })
+    expect(assess(period('PPPPPP......'))).toEqual({ kind: 'eligible' })
   })
 
   it('refuses five paid months and names what it counted', () => {
-    expect(assessEligibility(period('P.P.P.P.P...'))).toEqual({
+    expect(assess(period('P.P.P.P.P...'))).toEqual({
       kind: 'short-history',
       paidMonths: 5,
       periodMonths: 12,
@@ -68,7 +73,7 @@ describe('assessEligibility', () => {
   })
 
   it('reaches the threshold next month when the recent months carry the history', () => {
-    const outcome = assessEligibility(period('.......PPPPP'))
+    const outcome = assess(period('.......PPPPP'))
 
     expect(outcome).toEqual({
       kind: 'short-history',
@@ -79,7 +84,7 @@ describe('assessEligibility', () => {
   })
 
   it('counts out the paid months that age out of the window before the threshold', () => {
-    const outcome = assessEligibility(period('PPPPP.......'))
+    const outcome = assess(period('PPPPP.......'))
 
     expect(outcome).toEqual({
       kind: 'short-history',
@@ -90,7 +95,7 @@ describe('assessEligibility', () => {
   })
 
   it('gives an empty history six months of payouts to reach the threshold', () => {
-    const outcome = assessEligibility(period('............'))
+    const outcome = assess(period('............'))
 
     expect(outcome).toEqual({
       kind: 'short-history',
@@ -115,7 +120,7 @@ describe('assessEligibility', () => {
       '2026-11',
       '2026-12',
     ]
-    const outcome = assessEligibility(period('............', overDecember))
+    const outcome = assess(period('............', overDecember))
 
     expect(outcome).toEqual({
       kind: 'short-history',
@@ -126,11 +131,11 @@ describe('assessEligibility', () => {
   })
 
   it('passes a history whose months have no dollar value: the limit no longer needs one', () => {
-    expect(assessEligibility(period('PPPPPPPP?PP?'))).toEqual({ kind: 'eligible' })
+    expect(assess(period('PPPPPPPP?PP?'))).toEqual({ kind: 'eligible' })
   })
 
   it('refuses a short history, quotes or no quotes', () => {
-    expect(assessEligibility(period('?...........'))).toEqual({
+    expect(assess(period('?...........'))).toEqual({
       kind: 'short-history',
       paidMonths: 1,
       periodMonths: 12,
@@ -141,14 +146,36 @@ describe('assessEligibility', () => {
   it('answers the same twice: nothing here reads a clock', () => {
     const months = period('P.P.P.P.P...')
 
-    expect(assessEligibility(months)).toEqual(assessEligibility(months))
+    expect(assess(months)).toEqual(assess(months))
   })
 
   it('refuses a period no payout history could ever fill', () => {
-    expect(() => assessEligibility(period('.....'))).toThrow(/never hold/)
+    expect(() => assess(period('.....'))).toThrow(/never hold/)
   })
 
   it('refuses an empty period', () => {
-    expect(() => assessEligibility([])).toThrow(/never hold/)
+    expect(() => assess([])).toThrow(/never hold/)
+  })
+
+  // FR-001a: у мережі, де оператор забирає накопичене сам, ончейн лежить історія
+  // зняттів, а не заробітку, і рахувати ліміт на ній не можна ні за яких даних.
+  it('refuses a network whose payouts come on demand, however full the history', () => {
+    expect(assess(period('PPPPPPPPPPPP'), 'on-demand')).toEqual({
+      kind: 'withdrawal-history',
+      cadence: 'on-demand',
+    })
+  })
+
+  it('refuses on demand before it ever looks at the period', () => {
+    expect(assess(period('.....'), 'on-demand')).toEqual({
+      kind: 'withdrawal-history',
+      cadence: 'on-demand',
+    })
+  })
+
+  it('lets every paid cadence through to the history threshold', () => {
+    for (const cadence of ['daily', 'weekly', 'monthly'] as const) {
+      expect(assess(period('PPPPPPPPPPPP'), cadence)).toEqual({ kind: 'eligible' })
+    }
   })
 })

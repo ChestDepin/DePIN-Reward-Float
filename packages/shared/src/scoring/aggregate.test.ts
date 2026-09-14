@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { parseRewardNetworks } from '../schemas/network.ts'
 import { solanaAddressSchema } from '../schemas/primitives.ts'
-import { aggregateMonthlyPayouts, calendarMonthSchema, payoutValueUsd } from './aggregate.ts'
+import {
+  aggregateMonthlyPayouts,
+  calendarMonthSchema,
+  formatUsd,
+  payoutValueUsd,
+  usdAmountSchema,
+} from './aggregate.ts'
 import type { RecognisedPayout } from './classify.ts'
 import { calendarDaySchema, type PriceSeries, priceUsdSchema } from './price.ts'
 
@@ -179,5 +185,31 @@ describe('aggregateMonthlyPayouts', () => {
 
   it('rejects a period that ends before it starts', () => {
     expect(() => aggregate([], '2026-03', '2026-01')).toThrow()
+  })
+})
+
+describe('usd amounts against numeric(20,6)', () => {
+  it('reads a decimal amount as whole microdollars', () => {
+    expect(usdAmountSchema.parse('4.000000')).toBe(4_000_000n)
+    expect(usdAmountSchema.parse('0.000001')).toBe(1n)
+    expect(usdAmountSchema.parse('12')).toBe(12_000_000n)
+  })
+
+  it('writes the amount back with the scale the column keeps', () => {
+    expect(formatUsd(4_000_000n)).toBe('4.000000')
+    expect(formatUsd(1n)).toBe('0.000001')
+    expect(formatUsd(0n)).toBe('0.000000')
+  })
+
+  it('comes back from the column as the number that went in', () => {
+    for (const units of [0n, 1n, 999_999n, 4_000_000n, 18_446_744_073_709n]) {
+      expect(usdAmountSchema.parse(formatUsd(units))).toBe(units)
+    }
+  })
+
+  it('refuses a number that lost precision on the way in', () => {
+    expect(usdAmountSchema.safeParse('1.0000001').success).toBe(false)
+    expect(usdAmountSchema.safeParse('01.0').success).toBe(false)
+    expect(usdAmountSchema.safeParse('').success).toBe(false)
   })
 })

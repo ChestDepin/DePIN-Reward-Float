@@ -1,3 +1,4 @@
+import type { PayoutCadence } from '../schemas/network.ts'
 import { type CalendarMonth, calendarMonthSchema, type MonthlyPayouts } from './aggregate.ts'
 
 // Рішення 2026-08-31: шість непорожніх місяців із дванадцяти, підряд
@@ -6,6 +7,10 @@ export const REQUIRED_PAID_MONTHS = 6
 
 export type Eligibility =
   | { kind: 'eligible' }
+  // FR-001a: у мережі, де оператор забирає накопичене на вимогу, ончейн лежить
+  // історія зняттів, а не заробітку. Стабільність порахувалась би на ритмі
+  // оператора, тож ліміт тут не рахується взагалі, скільки б місяців не було.
+  | { kind: 'withdrawal-history'; cadence: PayoutCadence }
   | {
       kind: 'short-history'
       paidMonths: number
@@ -38,7 +43,13 @@ function projectThresholdMonth(months: readonly MonthlyPayouts[], last: Calendar
   return addMonths(last, REQUIRED_PAID_MONTHS)
 }
 
-export function assessEligibility(months: readonly MonthlyPayouts[]): Eligibility {
+export function assessEligibility(input: {
+  months: readonly MonthlyPayouts[]
+  cadence: PayoutCadence
+}): Eligibility {
+  const { months, cadence } = input
+  if (cadence === 'on-demand') return { kind: 'withdrawal-history', cadence }
+
   if (months.length < REQUIRED_PAID_MONTHS) {
     throw new Error(
       `a period of ${months.length} months can never hold ${REQUIRED_PAID_MONTHS} paid ones`,

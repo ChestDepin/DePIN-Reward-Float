@@ -104,12 +104,19 @@ describe('price_points', () => {
 })
 
 describe('credit_profiles', () => {
-  it('keeps the three unavailable states apart from a limit of zero', () => {
+  // Ліміт рахується на мережу, а не на гаманець: HONEY і HNT непорівнянні ані
+  // знаками, ані ціною, ані волатильністю.
+  it('is one profile per wallet per network', () => {
+    expect(primaryKeyOf(creditProfiles)).toEqual(['wallet', 'network_id'])
+  })
+
+  it('keeps every unavailable state apart from a limit of zero', () => {
     expect(columnOf(creditProfiles, 'status').enumValues).toEqual([
       'available',
       'ineligible',
       'data_unavailable',
       'incomplete_prices',
+      'no_recent_price',
     ])
   })
 

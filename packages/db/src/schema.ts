@@ -33,6 +33,10 @@ export const creditProfileStatusEnum = pgEnum('credit_profile_status', [
   'ineligible',
   'data_unavailable',
   'incomplete_prices',
+  // FR-004a: недавньої ціни немає взагалі — інше твердження, ніж «ліміт 0» і ніж
+  // «історію не вдалося прочитати». `incomplete_prices` описує стан, якого після
+  // T018b не існує, і йде разом із T023.
+  'no_recent_price',
 ])
 
 export const networks = pgTable('networks', {
@@ -87,7 +91,10 @@ export const pricePoints = pgTable(
 export const creditProfiles = pgTable(
   'credit_profiles',
   {
-    wallet: address('wallet').primaryKey(),
+    wallet: address('wallet').notNull(),
+    // Ліміт рахується на мережу: у HONEY і HNT різні знаки, ціни й волатильність,
+    // і одне число на гаманець довелося б або складати з непорівнянних, або
+    // мовчки рахувати на одній мережі.
     networkId: text('network_id')
       .notNull()
       .references(() => networks.id),
@@ -100,6 +107,7 @@ export const creditProfiles = pgTable(
     expiresAt: moment('expires_at').notNull(),
   },
   (table) => [
+    primaryKey({ columns: [table.wallet, table.networkId] }),
     // Найдешевший спосіб збрехати оператору — показати нуль там, де насправді
     // не вдалося прочитати дані. Обмеження не дає числу існувати поза станом,
     // у якому воно справді порахувалось (FR-025, FR-004a).
