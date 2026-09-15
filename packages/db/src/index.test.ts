@@ -84,6 +84,7 @@ describe('migrations', () => {
         { idx: 4, tag: '0004_cursor_token_account' },
         { idx: 5, tag: '0005_drop_cursor_network' },
         { idx: 6, tag: '0006_limit_per_network' },
+        { idx: 7, tag: '0007_stored_profile_states' },
       ],
     })
   })
@@ -98,6 +99,21 @@ describe('migrations', () => {
     expect(added).toContain('"source" text NOT NULL')
     expect(dropped).toContain('DROP COLUMN "distributors"')
     expect(dropped).toContain('DROP COLUMN "distributor"')
+  })
+
+  // Значення з enum не видаляється на місці: тип перестворюється, а перевірку
+  // «число тільки коли ліміт порахований» доводиться зняти й повернути — інакше
+  // літерал у ній лишається прив'язаним до старого типу і зміна падає.
+  it('rebuilds the profile status type without losing the check on it', () => {
+    const sql = readFileSync(path.join(MIGRATIONS_FOLDER, '0007_stored_profile_states.sql'), 'utf8')
+
+    expect(sql).toContain('DROP CONSTRAINT "credit_profiles_limit_only_when_available"')
+    expect(sql).toContain(
+      `CREATE TYPE "public"."credit_profile_status" AS ENUM('available', 'ineligible', 'no_recent_price')`,
+    )
+    expect(
+      sql.lastIndexOf('ADD CONSTRAINT "credit_profiles_limit_only_when_available"'),
+    ).toBeGreaterThan(sql.indexOf('CREATE TYPE "public"."credit_profile_status"'))
   })
 
   // Курсор не перенесений, а перекладений на інший ключ: мережі в ньому більше

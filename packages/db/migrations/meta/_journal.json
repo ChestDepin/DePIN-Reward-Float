@@ -50,6 +50,13 @@
       "when": 1788196741876,
       "tag": "0006_limit_per_network",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788197825786,
+      "tag": "0007_stored_profile_states",
+      "breakpoints": true
     }
   ]
 }

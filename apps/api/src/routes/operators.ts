@@ -5,12 +5,7 @@ import {
   pricePoints,
 } from '@drf/db'
 import type { NetworkPayoutHistory, PayoutHistory } from '@drf/shared/api'
-import {
-  type RewardNetwork,
-  rewardNetworkSchema,
-  type SolanaAddress,
-  solanaAddressSchema,
-} from '@drf/shared/schemas'
+import { type RewardNetwork, rewardNetworkSchema, type SolanaAddress } from '@drf/shared/schemas'
 import {
   aggregateMonthlyPayouts,
   type CalendarDay,
@@ -25,10 +20,9 @@ import {
   toCalendarDay,
   toCalendarMonth,
 } from '@drf/shared/scoring'
-import { zValidator } from '@hono/zod-validator'
 import { and, asc, desc, eq, gte, inArray, lt } from 'drizzle-orm'
 import { Hono } from 'hono'
-import { z } from 'zod'
+import { reading, walletParam } from './errors.ts'
 
 const HISTORY_MONTHS = 12
 
@@ -60,33 +54,36 @@ export function createDbPayoutHistorySource(db: Database): PayoutHistorySource {
       const from = monthStart(period.from)
       const until = monthStart(period.to, 1)
 
-      const rows = await db
-        .select({
-          signature: payoutsTable.signature,
-          networkId: payoutsTable.networkId,
-          source: payoutsTable.source,
-          amount: payoutsTable.amount,
-          slot: payoutsTable.slot,
-          blockTime: payoutsTable.blockTime,
-        })
-        .from(payoutsTable)
-        .where(
-          and(
-            eq(payoutsTable.wallet, wallet),
-            gte(payoutsTable.blockTime, from),
-            lt(payoutsTable.blockTime, until),
-          ),
-        )
-        .orderBy(desc(payoutsTable.blockTime), asc(payoutsTable.signature))
+      const rows = await reading(
+        'the payout history',
+        db
+          .select({
+            signature: payoutsTable.signature,
+            networkId: payoutsTable.networkId,
+            source: payoutsTable.source,
+            amount: payoutsTable.amount,
+            slot: payoutsTable.slot,
+            blockTime: payoutsTable.blockTime,
+          })
+          .from(payoutsTable)
+          .where(
+            and(
+              eq(payoutsTable.wallet, wallet),
+              gte(payoutsTable.blockTime, from),
+              lt(payoutsTable.blockTime, until),
+            ),
+          )
+          .orderBy(desc(payoutsTable.blockTime), asc(payoutsTable.signature)),
+      )
 
       const payouts = rows.map((row) => ({ ...row, wallet }))
       const networkIds = [...new Set(payouts.map((payout) => payout.networkId))]
       if (networkIds.length === 0) return { payouts: [], networks: [], prices: new Map() }
 
-      const networkRows = await db
-        .select()
-        .from(networksTable)
-        .where(inArray(networksTable.id, networkIds))
+      const networkRows = await reading(
+        'the supported networks',
+        db.select().from(networksTable).where(inArray(networksTable.id, networkIds)),
+      )
 
       // Мережа приходить із таблиці як дані і перевіряється тією ж схемою, що й
       // конфіг: FR-001a обіцяє, що третя мережа не змінює код, і сід — єдине
@@ -103,19 +100,22 @@ export function createDbPayoutHistorySource(db: Database): PayoutHistorySource {
 
       // Котирування читаються з кешу `price_points` і тільки звідти: запит
       // оператора не ходить у зовнішнє джерело цін, його наповнює воркер.
-      const quotes = await db
-        .select({ mint: pricePoints.mint, day: pricePoints.day, priceUsd: pricePoints.priceUsd })
-        .from(pricePoints)
-        .where(
-          and(
-            inArray(
-              pricePoints.mint,
-              networks.map((network) => network.token.mint),
+      const quotes = await reading(
+        'the cached prices',
+        db
+          .select({ mint: pricePoints.mint, day: pricePoints.day, priceUsd: pricePoints.priceUsd })
+          .from(pricePoints)
+          .where(
+            and(
+              inArray(
+                pricePoints.mint,
+                networks.map((network) => network.token.mint),
+              ),
+              gte(pricePoints.day, `${period.from}-01`),
+              lt(pricePoints.day, until.toISOString().slice(0, 10)),
             ),
-            gte(pricePoints.day, `${period.from}-01`),
-            lt(pricePoints.day, until.toISOString().slice(0, 10)),
           ),
-        )
+      )
 
       const prices = new Map<SolanaAddress, Map<CalendarDay, PriceUsd>>()
       for (const quote of quotes) {
@@ -198,31 +198,18 @@ export type OperatorRoutesDeps = {
   now: () => Date
 }
 
-const paramsSchema = z.object({ address: solanaAddressSchema })
-
 export function createOperatorRoutes({ payouts, now }: OperatorRoutesDeps): Hono {
   const routes = new Hono()
 
   // FR-024b: історія виплат публічна, і підпису тут не питають. Підпис
   // вимагається лише там, де рухаються кошти або видається дозвіл.
-  routes.get(
-    '/operators/:address/payouts',
-    zValidator('param', paramsSchema, (result, c) => {
-      if (result.success) return
+  routes.get('/operators/:address/payouts', walletParam, async (c) => {
+    const { address } = c.req.valid('param')
+    const period = historyPeriod(now())
+    const stored = await payouts.read(address, period)
 
-      return c.json(
-        { error: { code: 'INVALID_INPUT', message: 'not a Solana wallet address' } },
-        400,
-      )
-    }),
-    async (c) => {
-      const { address } = c.req.valid('param')
-      const period = historyPeriod(now())
-      const stored = await payouts.read(address, period)
-
-      return c.json(buildPayoutHistory({ wallet: address, period, stored }))
-    },
-  )
+    return c.json(buildPayoutHistory({ wallet: address, period, stored }))
+  })
 
   return routes
 }

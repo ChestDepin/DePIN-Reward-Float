@@ -5,12 +5,7 @@ import {
   type LimitRefusal,
   limitRefusalSchema,
 } from '@drf/shared/api'
-import {
-  type RewardNetwork,
-  rewardNetworkSchema,
-  type SolanaAddress,
-  solanaAddressSchema,
-} from '@drf/shared/schemas'
+import { type RewardNetwork, rewardNetworkSchema, type SolanaAddress } from '@drf/shared/schemas'
 import {
   aggregateMonthlyPayouts,
   assessEligibility,
@@ -26,10 +21,10 @@ import {
   toCalendarMonth,
   usdAmountSchema,
 } from '@drf/shared/scoring'
-import { zValidator } from '@hono/zod-validator'
-import { and, asc, eq } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
+import { reading, walletParam } from './errors.ts'
 import { historyPeriod, type PayoutHistorySource, type StoredHistory } from './operators.ts'
 
 // FR-007: показане значення не старше за 24 години.
@@ -186,12 +181,15 @@ function readRefusal(input: {
 export function createDbCreditProfileStore(db: Database): CreditProfileStore {
   return {
     async read(wallet) {
-      const rows = await db
-        .select({ profile: creditProfiles, network: networksTable })
-        .from(creditProfiles)
-        .innerJoin(networksTable, eq(creditProfiles.networkId, networksTable.id))
-        .where(eq(creditProfiles.wallet, wallet))
-        .orderBy(asc(creditProfiles.networkId))
+      const rows = await reading(
+        'the stored credit profiles',
+        db
+          .select({ profile: creditProfiles, network: networksTable })
+          .from(creditProfiles)
+          .innerJoin(networksTable, eq(creditProfiles.networkId, networksTable.id))
+          .where(eq(creditProfiles.wallet, wallet))
+          .orderBy(asc(creditProfiles.networkId)),
+      )
 
       return rows.map(({ profile, network: row }) => {
         // Мережа приходить із таблиці як дані і перевіряється тією ж схемою, що
@@ -263,8 +261,6 @@ export type LimitRoutesDeps = {
   now: () => Date
 }
 
-const paramsSchema = z.object({ address: solanaAddressSchema })
-
 export function createLimitRoutes({ payouts, profiles, now }: LimitRoutesDeps): Hono {
   const routes = new Hono()
 
@@ -286,13 +282,7 @@ export function createLimitRoutes({ payouts, profiles, now }: LimitRoutesDeps): 
     return computed
   }
 
-  const validate = zValidator('param', paramsSchema, (result, c) => {
-    if (result.success) return
-
-    return c.json({ error: { code: 'INVALID_INPUT', message: 'not a Solana wallet address' } }, 400)
-  })
-
-  routes.get('/operators/:address/limit', validate, async (c) => {
+  routes.get('/operators/:address/limit', walletParam, async (c) => {
     const { address } = c.req.valid('param')
 
     return c.json(
@@ -302,7 +292,7 @@ export function createLimitRoutes({ payouts, profiles, now }: LimitRoutesDeps): 
 
   // FR-007: перерахунок на вимогу оператора — той самий розрахунок, але без
   // огляду на строк придатності збереженого.
-  routes.post('/operators/:address/limit/refresh', validate, async (c) => {
+  routes.post('/operators/:address/limit/refresh', walletParam, async (c) => {
     const { address } = c.req.valid('param')
 
     return c.json(

@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import type { Logger } from 'pino'
+import { DataUnavailable, errorBody } from './routes/errors.ts'
 import { type CreditProfileStore, createLimitRoutes } from './routes/limit.ts'
 import { createOperatorRoutes, type PayoutHistorySource } from './routes/operators.ts'
 
@@ -10,10 +11,6 @@ export type ServerDeps = {
   // Годинник параметром: період історії — останні 12 місяців, і тест на межі
   // місяця інакше падав би раз на місяць.
   now: () => Date
-}
-
-function errorBody(code: 'NOT_FOUND' | 'INTERNAL', message: string) {
-  return { error: { code, message } }
 }
 
 export function createServer({ logger, payouts, profiles, now }: ServerDeps): Hono {
@@ -31,6 +28,10 @@ export function createServer({ logger, payouts, profiles, now }: ServerDeps): Ho
 
     // Причина лишається в логах: у тексті помилки бувають адреси й імена
     // внутрішніх сервісів, а їх не показують тому, хто прийшов ззовні.
+    if (error instanceof DataUnavailable) {
+      return c.json(errorBody('DATA_UNAVAILABLE', 'the payout history could not be read'), 503)
+    }
+
     return c.json(errorBody('INTERNAL', 'internal error'), 500)
   })
 

@@ -110,12 +110,12 @@ describe('credit_profiles', () => {
     expect(primaryKeyOf(creditProfiles)).toEqual(['wallet', 'network_id'])
   })
 
-  it('keeps every unavailable state apart from a limit of zero', () => {
+  // «Дані недоступні» тут немає навмисно: це стан відповіді, а не рядка —
+  // прочитати не вдалося, тож і зберігати нема чого (FR-025).
+  it('holds only the states a stored profile can be in', () => {
     expect(columnOf(creditProfiles, 'status').enumValues).toEqual([
       'available',
       'ineligible',
-      'data_unavailable',
-      'incomplete_prices',
       'no_recent_price',
     ])
   })

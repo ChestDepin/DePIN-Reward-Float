@@ -198,6 +198,14 @@ describe('computeProfiles', () => {
     expect(profile?.expiresAt).toEqual(new Date(NOW.getTime() + LIMIT_TTL_HOURS * 3_600_000))
   })
 
+  // FR-025: нуль — це порахований ліміт, а не «не змогли порахувати».
+  it('computes a limit of zero and does not call it a refusal', () => {
+    const [profile] = profilesOf({ ...fullHivemapper, payouts: paidMonths(HIVEMAPPER, 12, 1n) })
+
+    expect(profile?.limitUsd).toBe(0n)
+    expect(profile?.reason).toBeNull()
+  })
+
   it('answers a wallet with no indexed payouts with no profiles, not with an error', () => {
     expect(profilesOf({})).toEqual([])
   })

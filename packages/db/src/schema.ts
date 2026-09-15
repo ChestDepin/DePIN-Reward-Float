@@ -28,14 +28,13 @@ const moment = (name: string) => timestamp(name, { withTimezone: true })
 
 export const payoutCadenceEnum = pgEnum('payout_cadence', PAYOUT_CADENCES)
 
+// Стани, у яких профіль може лежати в базі, і тільки вони. «Дані недоступні» —
+// стан відповіді, а не рядка: якщо історію не вдалося прочитати, зберігати
+// нічого й нема про що. `incomplete_prices` описував стан, якого після T018b не
+// існує — його заступив `no_recent_price` (FR-004a).
 export const creditProfileStatusEnum = pgEnum('credit_profile_status', [
   'available',
   'ineligible',
-  'data_unavailable',
-  'incomplete_prices',
-  // FR-004a: недавньої ціни немає взагалі — інше твердження, ніж «ліміт 0» і ніж
-  // «історію не вдалося прочитати». `incomplete_prices` описує стан, якого після
-  // T018b не існує, і йде разом із T023.
   'no_recent_price',
 ])
 

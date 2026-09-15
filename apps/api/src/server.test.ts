@@ -1,6 +1,7 @@
 import { createLogger } from '@drf/shared/log'
 import { solanaAddressSchema } from '@drf/shared/schemas'
 import { describe, expect, it } from 'vitest'
+import { DataUnavailable } from './routes/errors.ts'
 import type { CreditProfileStore } from './routes/limit.ts'
 import type { PayoutHistorySource } from './routes/operators.ts'
 import { createServer } from './server.ts'
@@ -72,6 +73,43 @@ describe('createServer', () => {
     )
 
     expect(response.status).toBe(200)
+  })
+
+  // FR-025: історію не вдалося прочитати — окремий стан, а не ліміт 0 і не
+  // внутрішня помилка, за якою оператор нічого не може зробити.
+  it('says the data is unavailable when the history cannot be read', async () => {
+    const wallet = solanaAddressSchema.parse('4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy')
+    const app = createServer({
+      ...deps(capture().logger),
+      payouts: {
+        read: async () => {
+          throw new DataUnavailable('payouts')
+        },
+      },
+    })
+
+    const response = await app.request(`/v1/operators/${wallet}/limit`)
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({
+      error: { code: 'DATA_UNAVAILABLE', message: 'the payout history could not be read' },
+    })
+  })
+
+  it('logs the unreadable source instead of naming it to the caller', async () => {
+    const { lines, logger } = capture()
+    const app = createServer({
+      ...deps(logger),
+      payouts: {
+        read: async () => {
+          throw new DataUnavailable('select from payouts at 10.0.0.4')
+        },
+      },
+    })
+
+    await app.request('/v1/operators/4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy/limit')
+
+    expect(JSON.stringify(lines)).toContain('10.0.0.4')
   })
 
   it('answers an unknown route in the shared error shape', async () => {
