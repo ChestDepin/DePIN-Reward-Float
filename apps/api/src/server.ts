@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import type { Logger } from 'pino'
 import { DataUnavailable, errorBody } from './routes/errors.ts'
+import { createHealthRoutes, type PayoutActivitySource } from './routes/health.ts'
 import { type CreditProfileStore, createLimitRoutes } from './routes/limit.ts'
 import { createOperatorRoutes, type PayoutHistorySource } from './routes/operators.ts'
 
@@ -8,16 +9,16 @@ export type ServerDeps = {
   logger: Logger
   payouts: PayoutHistorySource
   profiles: CreditProfileStore
+  activity: PayoutActivitySource
   // Годинник параметром: період історії — останні 12 місяців, і тест на межі
   // місяця інакше падав би раз на місяць.
   now: () => Date
 }
 
-export function createServer({ logger, payouts, profiles, now }: ServerDeps): Hono {
+export function createServer({ logger, payouts, profiles, activity, now }: ServerDeps): Hono {
   const app = new Hono()
 
-  app.get('/health', (c) => c.json({ status: 'ok' }))
-
+  app.route('/', createHealthRoutes({ activity, now }))
   app.route('/v1', createOperatorRoutes({ payouts, now }))
   app.route('/v1', createLimitRoutes({ payouts, profiles, now }))
 

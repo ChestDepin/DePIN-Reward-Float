@@ -2,6 +2,7 @@ import { createLogger } from '@drf/shared/log'
 import { solanaAddressSchema } from '@drf/shared/schemas'
 import { describe, expect, it } from 'vitest'
 import { DataUnavailable } from './routes/errors.ts'
+import type { PayoutActivitySource } from './routes/health.ts'
 import type { CreditProfileStore } from './routes/limit.ts'
 import type { PayoutHistorySource } from './routes/operators.ts'
 import { createServer } from './server.ts'
@@ -15,10 +16,15 @@ const NO_PROFILES: CreditProfileStore = {
   write: async () => {},
 }
 
+const NO_ACTIVITY: PayoutActivitySource = {
+  read: async () => ({ networks: [], activity: [] }),
+}
+
 const deps = (logger: ReturnType<typeof createLogger>) => ({
   logger,
   payouts: EMPTY,
   profiles: NO_PROFILES,
+  activity: NO_ACTIVITY,
   now: () => new Date('2026-08-31T12:00:00.000Z'),
 })
 
@@ -44,6 +50,28 @@ describe('createServer', () => {
 
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ status: 'ok' })
+  })
+
+  it('mounts the payout-source alarm next to /health', async () => {
+    const response = await createServer(deps(capture().logger)).request('/health/payout-sources')
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ status: 'ok', sources: [] })
+  })
+
+  it('says the data is unavailable when the payout activity cannot be read', async () => {
+    const app = createServer({
+      ...deps(capture().logger),
+      activity: {
+        read: async () => {
+          throw new DataUnavailable('the payout activity')
+        },
+      },
+    })
+
+    const response = await app.request('/health/payout-sources')
+
+    expect(response.status).toBe(503)
   })
 
   it('has /v1 mounted, so a path under it is a miss and not a wrong prefix', async () => {
