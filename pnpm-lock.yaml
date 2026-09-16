@@ -172,9 +172,18 @@ importers:
       '@drf/anchor-client':
         specifier: workspace:^
         version: link:../packages/anchor-client
+      '@drf/api':
+        specifier: workspace:^
+        version: link:../apps/api
+      '@drf/db':
+        specifier: workspace:^
+        version: link:../packages/db
       '@drf/shared':
         specifier: workspace:^
         version: link:../packages/shared
+      drizzle-orm:
+        specifier: ^0.44.7
+        version: 0.44.7(postgres@3.4.9)
 
 packages:
 

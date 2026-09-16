@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     "./server": "./src/server.ts",
-    "./config": "./src/config.ts"
+    "./config": "./src/config.ts",
+    "./routes/limit": "./src/routes/limit.ts",
+    "./routes/operators": "./src/routes/operators.ts"
   },
   "scripts": {
     "start": "node --env-file-if-exists=../../.env src/index.ts",
