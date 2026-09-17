@@ -16,6 +16,7 @@ const app = createServer({
   payouts: createDbPayoutHistorySource(db),
   profiles: createDbCreditProfileStore(db),
   activity: createDbPayoutActivitySource(db),
+  webOrigins: config.webOrigins,
   now: () => new Date(),
 })
 

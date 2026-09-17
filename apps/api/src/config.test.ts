@@ -11,6 +11,7 @@ const validEnv = {
   ATTESTOR_PUBLIC_KEY: PUBLIC,
   PORT: '9001',
   LOG_LEVEL: 'debug',
+  WEB_ORIGIN: 'https://app.example.com',
 }
 
 describe('parseApiConfig', () => {
@@ -21,7 +22,23 @@ describe('parseApiConfig', () => {
       databaseUrl: 'postgres://user:password@db.example.com:5432/depin_reward_float',
       attestorSecretKey: SECRET,
       attestorPublicKey: PUBLIC,
+      webOrigins: ['https://app.example.com'],
     })
+  })
+
+  it('lets more than one page read the api, separated by commas', () => {
+    const config = parseApiConfig({
+      ...validEnv,
+      WEB_ORIGIN: 'https://app.example.com, http://localhost:5173',
+    })
+
+    expect(config.webOrigins).toEqual(['https://app.example.com', 'http://localhost:5173'])
+  })
+
+  // Порожній перелік означав би «жодна сторінка не може читати», тобто api,
+  // до якого не достукатись із браузера взагалі.
+  it('refuses an empty list of web origins', () => {
+    expect(() => parseApiConfig({ ...validEnv, WEB_ORIGIN: ' , ' })).toThrow(/WEB_ORIGIN/)
   })
 
   it('falls back to port 8787 and info logging', () => {
@@ -33,6 +50,7 @@ describe('parseApiConfig', () => {
 
     expect(config.port).toBe(8787)
     expect(config.logLevel).toBe('info')
+    expect(config.webOrigins).toEqual(['http://localhost:5173'])
   })
 
   it('accepts the postgresql:// scheme', () => {

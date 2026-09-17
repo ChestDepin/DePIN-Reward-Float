@@ -2,12 +2,27 @@ import { z } from 'zod'
 
 const base58 = /^[1-9A-HJ-NP-Za-km-z]{32,128}$/
 
+// Сторінка і api живуть на різних походженнях і в розробці, і на проді, тож
+// перелік дозволених — конфіг, а не константа. Кома розділяє, бо змінна
+// середовища не вміє масивів.
+const webOriginsSchema = z
+  .string()
+  .default('http://localhost:5173')
+  .transform((raw) =>
+    raw
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter((origin) => origin !== ''),
+  )
+  .pipe(z.array(z.url({ protocol: /^https?$/ })).min(1))
+
 const apiEnvSchema = z.object({
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
   ATTESTOR_SECRET_KEY: z.string().regex(base58),
   ATTESTOR_PUBLIC_KEY: z.string().regex(base58),
   PORT: z.coerce.number().int().min(1).max(65535).default(8787),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  WEB_ORIGIN: webOriginsSchema,
 })
 
 export type ApiConfig = {
@@ -15,6 +30,7 @@ export type ApiConfig = {
   attestorSecretKey: string
   attestorPublicKey: string
   port: number
+  webOrigins: readonly string[]
   logLevel: z.infer<typeof apiEnvSchema>['LOG_LEVEL']
 }
 
@@ -35,6 +51,7 @@ export function parseApiConfig(env: unknown): ApiConfig {
     attestorSecretKey: parsed.data.ATTESTOR_SECRET_KEY,
     attestorPublicKey: parsed.data.ATTESTOR_PUBLIC_KEY,
     port: parsed.data.PORT,
+    webOrigins: parsed.data.WEB_ORIGIN,
     logLevel: parsed.data.LOG_LEVEL,
   }
 }

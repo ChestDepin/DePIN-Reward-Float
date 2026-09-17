@@ -25,6 +25,7 @@ const deps = (logger: ReturnType<typeof createLogger>) => ({
   payouts: EMPTY,
   profiles: NO_PROFILES,
   activity: NO_ACTIVITY,
+  webOrigins: ['http://localhost:5173'],
   now: () => new Date('2026-08-31T12:00:00.000Z'),
 })
 
@@ -72,6 +73,26 @@ describe('createServer', () => {
     const response = await app.request('/health/payout-sources')
 
     expect(response.status).toBe(503)
+  })
+
+  // Без цього заголовка сторінка не бачить нічого: вона завжди на іншому
+  // походженні, ніж api.
+  it('lets the configured web origin read the answer', async () => {
+    const response = await createServer(deps(capture().logger)).request(
+      '/v1/operators/4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy/limit',
+      { headers: { origin: 'http://localhost:5173' } },
+    )
+
+    expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost:5173')
+  })
+
+  it('does not hand the same permission to an origin nobody configured', async () => {
+    const response = await createServer(deps(capture().logger)).request(
+      '/v1/operators/4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy/limit',
+      { headers: { origin: 'https://not-ours.example' } },
+    )
+
+    expect(response.headers.get('access-control-allow-origin')).toBeNull()
   })
 
   it('has /v1 mounted, so a path under it is a miss and not a wrong prefix', async () => {

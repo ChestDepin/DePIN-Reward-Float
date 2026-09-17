@@ -12,6 +12,12 @@ const Offer = () => {
     <div>
       <h1 className="text-[13px] sm:text-[15px] tracking-[0.18em] text-dim">LOAN TERMS</h1>
 
+      <p className="mt-4 border border-amber px-3 py-2 text-[11px] sm:text-[12px] leading-relaxed text-amber">
+        MOCK. Every figure on this screen is invented. Lending is not built yet — there is no
+        endpoint behind this page and no money moves. The payout history and the credit limit are
+        real; this is not.
+      </p>
+
       <div className="mt-8 border-t border-rule">
         {OFFER_TERMS.map(([label, value]) => (
           <DefRow key={label} label={label} value={value} />

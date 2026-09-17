@@ -15,5 +15,11 @@
     "@drf/db": "workspace:^",
     "@drf/shared": "workspace:^",
     "drizzle-orm": "^0.44.7"
+  },
+  "devDependencies": {
+    "@drf/web": "workspace:^",
+    "@hono/node-server": "^1.19.9",
+    "playwright": "^1.62.1",
+    "vite": "^8.2.2"
   }
 }

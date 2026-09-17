@@ -36,10 +36,10 @@ const Terminal = () => {
         </main>
 
         <footer className="border-t border-rule py-6 text-[11px] leading-relaxed text-dim">
-          Reads public payout history. Nothing is signed. No wallet is connected.
+          Reads public payout history. Nothing is signed.
           <br />
-          Network names appear only as the source of the payout data being read. All addresses and
-          figures shown are fictional demonstration data.
+          Network names appear only as the source of the payout data being read. Payout history and
+          credit limits are read from the chain; the loan terms screen is still a mock and says so.
         </footer>
       </div>
     </div>

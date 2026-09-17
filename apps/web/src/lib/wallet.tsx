@@ -2,6 +2,7 @@ import { type SolanaAddress, solanaAddressSchema } from '@drf/shared/schemas'
 import type { Adapter } from '@solana/wallet-adapter-base'
 import { useWallet, WalletProvider } from '@solana/wallet-adapter-react'
 import type { ReactNode } from 'react'
+import { useParams } from 'react-router-dom'
 
 export type WalletSnapshot = {
   wallets: readonly string[]
@@ -58,6 +59,15 @@ export function useOperatorIdentity(): OperatorIdentity {
     connecting,
     address: publicKey?.toBase58() ?? null,
   })
+}
+
+// Адреса у шляху приходить із рядка, який набрав хтось інший, тож перевіряється
+// тією ж схемою, що й адреса з розширення гаманця.
+export function useAddressParam(): SolanaAddress | null {
+  const { address } = useParams()
+  const parsed = solanaAddressSchema.safeParse(address)
+
+  return parsed.success ? parsed.data : null
 }
 
 export function useWalletConnection() {

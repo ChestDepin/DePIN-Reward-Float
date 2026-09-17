@@ -12,3 +12,15 @@ export function percentile(samples: readonly number[], fraction: number): number
 
   return value
 }
+
+export function summarise(label: string, samples: readonly number[]): string {
+  const round = (value: number) => Math.round(value)
+
+  return [
+    `${label}: n=${samples.length}`,
+    `min=${round(percentile(samples, 0.01))}ms`,
+    `p50=${round(percentile(samples, 0.5))}ms`,
+    `p95=${round(percentile(samples, 0.95))}ms`,
+    `max=${round(percentile(samples, 1))}ms`,
+  ].join(' ')
+}
