@@ -21,8 +21,8 @@ derived from mainnet, but no money moves yet.
 
 What works end to end:
 
-- payouts of supported networks are classified and indexed from mainnet, third-party
-  transfers of the same token excluded;
+- payouts of supported networks are classified and indexed from mainnet — the indexer
+  invoked by hand, see below — third-party transfers of the same token excluded;
 - monthly payout history and a per-network credit limit are served over HTTP and
   rendered in the browser;
 - a refused limit states its reason as structured data, not prose.
@@ -33,11 +33,15 @@ What is deliberately not here yet:
   no drawdown. The on-chain program (`programs/reward-float`) declares its id and nothing
   else — pool, loans and reward withholding land in a later milestone.
 - **`/offer` is a mock.** The page says so on screen.
-- **the indexer and the keeper have no runnable entry point.** Their logic is written and
-  tested; `apps/worker/src/indexer/index.ts` re-exports it and does not run it. The
-  database is populated by calling those functions directly.
+- **the indexer has no runnable entry point, and the keeper has no code.** The indexer's
+  logic is written and tested; `apps/worker/src/indexer/index.ts` re-exports it and does
+  not run it, and nothing in `apps/worker` reads a single environment variable. The
+  database is populated by calling those functions directly. `apps/worker/src/keeper` is
+  an empty module.
 - **migrations and seeding are exported, not wired.** `migrateToLatest` and `seedNetworks`
   are called by hand.
+- **nothing is signed yet.** `packages/shared/src/attestation` and `packages/anchor-client`
+  are empty modules. The API refuses to start without an attestor key, but never uses it.
 
 ## How the limit is derived
 
@@ -50,6 +54,10 @@ carries that network's mint, is addressed to the operator and is non-zero. Every
 is ignored with a named reason, and that classifier is held to zero misclassifications on
 recorded real wallets (`packages/shared/src/scoring/classify.spec.ts`, fixtures in
 `fixtures/wallets.json`).
+
+Each payout is valued in dollars at the DefiLlama quote for the day it landed
+(`coins.llama.fi`, no key required), cached in `price_points`. A day without a quote is
+kept as a payout with no dollar value rather than dropped.
 
 Eligible history is six paid months out of the last twelve — not necessarily consecutive.
 Below that, the limit is refused with the month the threshold will be reached, rather than
@@ -81,10 +89,10 @@ checked against mainnet.
 ```
 apps/api          Hono HTTP service — payout history, credit limit, health
 apps/web          React 19 + Vite operator dashboard
-apps/worker       indexer (reads mainnet) and keeper (writes devnet)
+apps/worker       indexer (reads mainnet); keeper (writes devnet) is an empty module
 packages/shared   Zod schemas, classifier, scoring — no I/O
 packages/db       Drizzle schema, migrations, seed
-packages/anchor-client  typed client for the on-chain program
+packages/anchor-client  client for the on-chain program (empty until it has instructions)
 programs/reward-float   Anchor program (declared, not implemented)
 tests             live and browser measurements, kept out of the gate
 ```
@@ -108,7 +116,8 @@ pnpm gate                  # lint + typecheck + test — green before every comm
 ```
 
 Apply the migrations and seed the supported networks by calling `migrateToLatest` and
-`seedNetworks` from `@drf/db` against your `DATABASE_URL`.
+`seedNetworks` from `@drf/db` against your `DATABASE_URL`. A schema change becomes a
+migration with `pnpm --filter @drf/db db:generate`.
 
 Run the two processes:
 
@@ -124,21 +133,22 @@ secret belongs in it.
 
 ### Environment
 
-`.env.example` is the full list. The ones M1 actually reads:
+`.env.example` is the full list. What M1 actually reads:
 
-| Variable | Used by | Meaning |
+| Variable | Read by | Meaning |
 |---|---|---|
-| `DATABASE_URL` | api, worker | Postgres connection string |
-| `MAINNET_RPC_URL` | indexer | where payouts are read from |
-| `DEVNET_RPC_URL` | keeper | where transactions are written |
-| `PRICE_API_BASE_URL`, `PRICE_API_KEY` | indexer | daily token quotes |
-| `ATTESTOR_SECRET_KEY`, `ATTESTOR_PUBLIC_KEY` | api | ed25519, base58 — signs limits |
+| `DATABASE_URL` | api | Postgres connection string |
+| `ATTESTOR_SECRET_KEY`, `ATTESTOR_PUBLIC_KEY` | api | ed25519, base58 — required at startup, unused until attestations exist |
 | `WEB_ORIGIN` | api | origins allowed to read the API |
-| `VITE_API_URL` | web | where the page fetches from |
 | `PORT`, `LOG_LEVEL` | api | defaults `8787` and `info` |
+| `VITE_API_URL` | web | where the page fetches from |
 
-Whoever holds `ATTESTOR_SECRET_KEY` can issue any limit. It never belongs in the
-repository and never in `web`.
+`MAINNET_RPC_URL`, `DEVNET_RPC_URL`, `KEEPER_SECRET_KEY`, `PROGRAM_ID` and `STABLE_MINT`
+are reserved for the worker and the program; nothing reads them yet. Prices need no
+variable at all.
+
+Whoever holds `ATTESTOR_SECRET_KEY` will be able to issue any limit. It never belongs in
+the repository and never in `web`.
 
 ## HTTP API
 
@@ -148,7 +158,11 @@ repository and never in `web`.
 | `GET` | `/health/payout-sources` | per source, whether payouts are still arriving |
 | `GET` | `/v1/operators/:address/payouts` | monthly payout history per network |
 | `GET` | `/v1/operators/:address/limit` | credit limit with factors, or a refusal |
-| `POST` | `/v1/operators/:address/limit/refresh` | recompute a limit past its expiry |
+| `POST` | `/v1/operators/:address/limit/refresh` | recompute the limit now, expired or not |
+
+A computed limit is stored and served as is for 24 hours (`expiresAt` in the response).
+Once any network's entry has expired, the next `GET` recomputes the whole wallet;
+`POST …/refresh` does not wait for that.
 
 Errors follow `{ "error": { "code": ..., "message": ... } }`. `DATA_UNAVAILABLE` is kept
 apart from every other failure on purpose: "we could not read the chain" must never reach
