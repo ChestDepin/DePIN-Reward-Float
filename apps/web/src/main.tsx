@@ -11,7 +11,9 @@ if (!rootElement) throw new Error('Failed to find the root element')
 createRoot(rootElement).render(
   <StrictMode>
     <OperatorIdentityProvider>
-      <BrowserRouter>
+      {/* Under GitHub Pages the site lives at /<repo>/, and Vite's base is the
+          only place that knows it: the router has to start from the same root. */}
+      <BrowserRouter basename={import.meta.env.BASE_URL}>
         <App />
       </BrowserRouter>
     </OperatorIdentityProvider>

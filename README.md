@@ -185,6 +185,22 @@ fresh deployment would start out screaming.
 The address lives in the path because payout history is public; a connected wallet is just
 one address among them.
 
+### Deploying to GitHub Pages
+
+`.github/workflows/pages.yml` builds `apps/web` on every push to `main` and publishes it
+to `https://<owner>.github.io/<repo>/`. The base path is taken from the repository name,
+and `404.html` is a copy of the app shell so a direct link to `/limit/<address>` reaches
+the router instead of GitHub's 404. Three things are set outside the repository:
+
+1. **Settings → Pages → Source: GitHub Actions** — once, by the repository owner.
+2. **Repository variable `VITE_API_URL`** — the `https://` origin of a deployed API.
+   Without it the page is built against `localhost` and shows every screen as
+   unreachable; the page never holds a secret, so a variable is the right place.
+3. **`WEB_ORIGIN` on that API** must include `https://<owner>.github.io`, or the browser
+   blocks every request.
+
+Pages serves static files only. The API and its Postgres run elsewhere.
+
 ## Tests and measurements
 
 ```bash

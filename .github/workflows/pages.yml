@@ -1,0 +1,64 @@
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# A newer push supersedes a deploy still in flight; an in-progress deploy is
+# never cancelled halfway, or Pages could serve half of one build.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter @drf/web typecheck
+
+      # The site is served from https://<owner>.github.io/<repo>/, so the base
+      # is the repository name, never a literal. VITE_API_URL is baked into the
+      # bundle at this point. An unset repository variable arrives as an empty
+      # string, which the page rejects as a URL and dies on — so it is dropped,
+      # and the page falls back to localhost and shows every screen as
+      # unreachable until the variable points at a deployed API.
+      - run: |
+          if [ -z "$VITE_API_URL" ]; then unset VITE_API_URL; fi
+          pnpm --filter @drf/web exec vite build --base "/${{ github.event.repository.name }}/"
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+
+      # Pages answers any unknown path with 404.html. A copy of the app shell
+      # there turns a direct link to /limit/<address> into a client-side route.
+      - run: cp apps/web/dist/index.html apps/web/dist/404.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
