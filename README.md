@@ -201,6 +201,33 @@ the router instead of GitHub's 404. Three things are set outside the repository:
 
 Pages serves static files only. The API and its Postgres run elsewhere.
 
+### Deploying the API to Render
+
+`render.yaml` is a Render Blueprint: one free web service that runs
+`node apps/api/src/index.ts` straight from the sources, with `/health` as its health
+check. The free plan has no background workers, so when the indexer and keeper get an
+entry point they join this process rather than becoming services of their own.
+
+1. **Render → New → Blueprint**, pick the repository. Blueprint syncs with `main` on push.
+2. Fill in the four `sync: false` variables in the dashboard: `DATABASE_URL` (the session
+   pooler on port 5432 — the driver uses prepared statements, which the transaction
+   pooler rejects), `ATTESTOR_SECRET_KEY`, `ATTESTOR_PUBLIC_KEY`, and `WEB_ORIGIN` set
+   to `https://<owner>.github.io`. `PORT` is provided by Render.
+3. Put the service URL (`https://<name>.onrender.com`) into the repository variable
+   `VITE_API_URL` and re-run the `pages` workflow.
+
+A free instance sleeps after fifteen idle minutes and takes about a minute to wake.
+`.github/workflows/keep-alive.yml` pings `/health` every five minutes from GitHub
+Actions to keep it up; it reads the same `VITE_API_URL` variable and does nothing until
+that is set. GitHub disables the schedule in a repository with no commits for sixty
+days — re-enable it under Actions. **The first-screen budget (`SC-009`) is not met by a
+sleeping instance**: the number was measured against a running API, and a visitor who
+lands on a dormant one waits for the cold start first.
+
+On `SIGTERM` the API stops accepting connections, waits up to ten seconds for requests
+in flight, closes the database pool and exits — verified by signalling the process
+under Linux, since Windows never delivers the signal.
+
 ## Tests and measurements
 
 ```bash

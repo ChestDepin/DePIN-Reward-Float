@@ -1,7 +1,5 @@
 import { performance } from 'node:perf_hooks'
-import { createDbCreditProfileStore } from '@drf/api/routes/limit'
-import { createDbPayoutHistorySource } from '@drf/api/routes/operators'
-import { createServer } from '@drf/api/server'
+import { createApp } from '@drf/api/app'
 import { createDatabase, type Database, payouts as payoutsTable } from '@drf/db'
 import { createLogger } from '@drf/shared/log'
 import { eq } from 'drizzle-orm'
@@ -27,7 +25,7 @@ const url = databaseUrl()
 describe.skipIf(url === undefined)('SC-001 — connecting a wallet until the limit is shown', () => {
   let db: Database
   let close: () => Promise<void>
-  let app: ReturnType<typeof createServer>
+  let app: ReturnType<typeof createApp>
 
   const measure = async (): Promise<number> => {
     const started = performance.now()
@@ -46,12 +44,9 @@ describe.skipIf(url === undefined)('SC-001 — connecting a wallet until the lim
 
     await seedHistory(db)
 
-    app = createServer({
+    app = createApp({
+      db,
       logger: createLogger({ service: 'limit-latency', level: 'fatal' }),
-      payouts: createDbPayoutHistorySource(db),
-      profiles: createDbCreditProfileStore(db),
-      // Джерела тривоги в замірі немає: `GET /limit` до неї не звертається.
-      activity: { read: async () => ({ networks: [], activity: [] }) },
       // Замір ходить у процесі, без браузера, тож жодне походження йому не
       // потрібне — але список порожнім бути не може.
       webOrigins: ['http://localhost:5173'],

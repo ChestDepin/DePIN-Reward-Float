@@ -1,0 +1,38 @@
+# Render Blueprint: one free web service running the API. The free plan has
+# no background workers, so the indexer and keeper join this process when
+# they get an entry point, instead of becoming services of their own.
+#
+# A free instance sleeps after fifteen idle minutes and wakes on the first
+# request in about a minute; `.github/workflows/keep-alive.yml` keeps it up.
+services:
+  - type: web
+    name: depin-reward-float-api
+    runtime: node
+    plan: free
+    # Closest to the database (Supabase, eu-west-1).
+    region: frankfurt
+    # Not `corepack enable`: the image ships pnpm in a read-only /usr/bin,
+    # and Node 25+ no longer bundles corepack at all.
+    buildCommand: npx -y pnpm@9.15.0 install --frozen-lockfile
+    # Node runs the TypeScript sources directly; there is no build output.
+    startCommand: node apps/api/src/index.ts
+    healthCheckPath: /health
+    envVars:
+      # Same major as on the machine the numbers were measured on.
+      - key: NODE_VERSION
+        value: "26"
+      - key: LOG_LEVEL
+        value: info
+      # `sync: false` = entered in the dashboard, never stored in the repo.
+      # DATABASE_URL: the session pooler (port 5432) — the driver uses
+      # prepared statements, which the transaction pooler does not support.
+      - key: DATABASE_URL
+        sync: false
+      - key: ATTESTOR_SECRET_KEY
+        sync: false
+      - key: ATTESTOR_PUBLIC_KEY
+        sync: false
+      # Origin of the GitHub Pages site, scheme and host only:
+      # https://<owner>.github.io
+      - key: WEB_ORIGIN
+        sync: false

@@ -1,9 +1,7 @@
 import { createServer as createSocketServer } from 'node:net'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
-import { createDbCreditProfileStore } from '@drf/api/routes/limit'
-import { createDbPayoutHistorySource } from '@drf/api/routes/operators'
-import { createServer } from '@drf/api/server'
+import { createApp } from '@drf/api/app'
 import { createDatabase, type Database } from '@drf/db'
 import { createLogger } from '@drf/shared/log'
 import { serve } from '@hono/node-server'
@@ -89,11 +87,9 @@ describe.skipIf(url === undefined)('SC-009 — the first screen of the dashboard
     })
 
     api = serve({
-      fetch: createServer({
+      fetch: createApp({
+        db,
         logger: createLogger({ service: 'first-screen', level: 'fatal' }),
-        payouts: createDbPayoutHistorySource(db),
-        profiles: createDbCreditProfileStore(db),
-        activity: { read: async () => ({ networks: [], activity: [] }) },
         webOrigins: [origin],
         now: () => NOW,
       }).fetch,

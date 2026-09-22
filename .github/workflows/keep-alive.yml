@@ -1,0 +1,31 @@
+name: keep-alive
+
+# A free Render instance sleeps after fifteen idle minutes. Every five, not
+# every ten: GitHub runs schedules minutes late, and a ping that lands after
+# the instance dozed off only wakes it — the visitor still waits a minute.
+#
+# GitHub disables schedules in a repository with no commits for sixty days;
+# re-enable it under Actions when that happens.
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      # The same repository variable the page is built with, so the API has
+      # one address to keep in sync. Before it is set there is nothing to
+      # ping, and a red run every five minutes would only be noise.
+      - run: |
+          if [ -z "$API_URL" ]; then
+            echo "::warning::VITE_API_URL is not set; nothing to keep alive"
+            exit 0
+          fi
+          curl -sSf --max-time 120 "$API_URL/health"
+        env:
+          API_URL: ${{ vars.VITE_API_URL }}

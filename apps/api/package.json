@@ -4,10 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./server": "./src/server.ts",
-    "./config": "./src/config.ts",
-    "./routes/limit": "./src/routes/limit.ts",
-    "./routes/operators": "./src/routes/operators.ts"
+    "./app": "./src/app.ts",
+    "./config": "./src/config.ts"
   },
   "scripts": {
     "start": "node --env-file-if-exists=../../.env src/index.ts",
