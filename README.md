@@ -159,10 +159,17 @@ the repository and never in `web`.
 | `GET` | `/v1/operators/:address/payouts` | monthly payout history per network |
 | `GET` | `/v1/operators/:address/limit` | credit limit with factors, or a refusal |
 | `POST` | `/v1/operators/:address/limit/refresh` | recompute the limit now, expired or not |
+| `POST` | `/v1/operators/:address/attestations/limit` | sign the current limit for one borrow |
 
 A computed limit is stored and served as is for 24 hours (`expiresAt` in the response).
 Once any network's entry has expired, the next `GET` recomputes the whole wallet;
 `POST …/refresh` does not wait for that.
+
+An attestation carries one number for the operator, not one per network: on chain the
+limit is a single figure, so the limits of every network that has one are added up. It is
+signed over a fixed 72-byte message, expires in five minutes (never later than the limit
+behind it), and carries a nonce that is unique per wallet — the program will accept each
+nonce once. A wallet with no limit on any network gets `404`, not a signed zero.
 
 Errors follow `{ "error": { "code": ..., "message": ... } }`. `DATA_UNAVAILABLE` is kept
 apart from every other failure on purpose: "we could not read the chain" must never reach

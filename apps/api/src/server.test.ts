@@ -1,6 +1,7 @@
 import { createLogger } from '@drf/shared/log'
 import { solanaAddressSchema } from '@drf/shared/schemas'
 import { describe, expect, it } from 'vitest'
+import type { AttestationJournal, Attestor } from './routes/attestations.ts'
 import { DataUnavailable } from './routes/errors.ts'
 import type { PayoutActivitySource } from './routes/health.ts'
 import type { CreditProfileStore } from './routes/limit.ts'
@@ -20,11 +21,24 @@ const NO_ACTIVITY: PayoutActivitySource = {
   read: async () => ({ networks: [], activity: [] }),
 }
 
+const NO_JOURNAL: AttestationJournal = {
+  issue: async () => {
+    throw new Error('the server tests never issue an attestation')
+  },
+}
+
+const ATTESTOR: Attestor = {
+  secretKey: new Uint8Array(32),
+  address: solanaAddressSchema.parse('11111111111111111111111111111111'),
+}
+
 const deps = (logger: ReturnType<typeof createLogger>) => ({
   logger,
   payouts: EMPTY,
   profiles: NO_PROFILES,
   activity: NO_ACTIVITY,
+  journal: NO_JOURNAL,
+  attestor: ATTESTOR,
   webOrigins: ['http://localhost:5173'],
   now: () => new Date('2026-08-31T12:00:00.000Z'),
 })

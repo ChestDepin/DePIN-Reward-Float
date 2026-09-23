@@ -1,8 +1,8 @@
-import { type Database, creditProfiles, networks as networksTable } from '@drf/db'
+import { creditProfiles, type Database, networks as networksTable } from '@drf/db'
 import {
   type CreditLimit,
-  limitFactorSchema,
   type LimitRefusal,
+  limitFactorSchema,
   limitRefusalSchema,
 } from '@drf/shared/api'
 import { type RewardNetwork, rewardNetworkSchema, type SolanaAddress } from '@drf/shared/schemas'
@@ -16,8 +16,8 @@ import {
   type LimitFactor,
   type MonthRange,
   type PriceSeries,
-  recentPriceWindow,
   REQUIRED_PAID_MONTHS,
+  recentPriceWindow,
   toCalendarMonth,
   usdAmountSchema,
 } from '@drf/shared/scoring'
@@ -255,16 +255,22 @@ export function createDbCreditProfileStore(db: Database): CreditProfileStore {
   }
 }
 
-export type LimitRoutesDeps = {
+export type ProfileReader = (
+  wallet: SolanaAddress,
+  at: Date,
+  refresh: boolean,
+) => Promise<readonly StoredCreditProfile[]>
+
+// Свіжість ліміту — те саме правило і для показу, і для атестації, тож воно
+// живе в одному місці: підписувати прострочений профіль не можна так само,
+// як і показувати його (FR-007).
+export function createProfileReader(deps: {
   payouts: PayoutHistorySource
   profiles: CreditProfileStore
-  now: () => Date
-}
+}): ProfileReader {
+  const { payouts, profiles } = deps
 
-export function createLimitRoutes({ payouts, profiles, now }: LimitRoutesDeps): Hono {
-  const routes = new Hono()
-
-  const current = async (wallet: SolanaAddress, at: Date, refresh: boolean) => {
+  return async (wallet, at, refresh) => {
     if (!refresh) {
       const stored = await profiles.read(wallet)
       // Порожній набір — це не свіжий кеш: гаманець, якому ліміт ще не рахували,
@@ -281,6 +287,17 @@ export function createLimitRoutes({ payouts, profiles, now }: LimitRoutesDeps): 
 
     return computed
   }
+}
+
+export type LimitRoutesDeps = {
+  payouts: PayoutHistorySource
+  profiles: CreditProfileStore
+  now: () => Date
+}
+
+export function createLimitRoutes({ payouts, profiles, now }: LimitRoutesDeps): Hono {
+  const routes = new Hono()
+  const current = createProfileReader({ payouts, profiles })
 
   routes.get('/operators/:address/limit', walletParam, async (c) => {
     const { address } = c.req.valid('param')

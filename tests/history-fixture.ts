@@ -17,6 +17,12 @@ const HISTORY_START = new Date('2025-09-01T00:00:00.000Z')
 
 export const WALLET = solanaAddressSchema.parse('4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy')
 
+// Заміри атестацій не просять — пара потрібна лише щоб зібрати застосунок.
+export const ATTESTOR = {
+  secretKey: new Uint8Array(32),
+  address: solanaAddressSchema.parse('11111111111111111111111111111111'),
+}
+
 const HONEY_MINT = solanaAddressSchema.parse('2RZMt9LwzUzSUNfprdLSUF33gS2Y3EJL3jqN6g6a9oP1')
 const HNT_MINT = solanaAddressSchema.parse('3mqvZ478SVFftqm6Pmh14SdUhUHuaG7KkKqaBDqNZADs')
 const HONEY_SOURCE = solanaAddressSchema.parse('G55iQCAVJt13mvYADJcqUddM3cpXEx5i94L54R6VgUz7')

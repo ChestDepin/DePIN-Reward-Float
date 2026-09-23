@@ -9,6 +9,7 @@ import { type Browser, chromium } from 'playwright'
 import { build, preview, type PreviewServer } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
+  ATTESTOR,
   clearCachedProfiles,
   databaseUrl,
   HIVEMAPPER,
@@ -90,6 +91,7 @@ describe.skipIf(url === undefined)('SC-009 — the first screen of the dashboard
       fetch: createApp({
         db,
         logger: createLogger({ service: 'first-screen', level: 'fatal' }),
+        attestor: ATTESTOR,
         webOrigins: [origin],
         now: () => NOW,
       }).fetch,

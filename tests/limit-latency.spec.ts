@@ -5,6 +5,7 @@ import { createLogger } from '@drf/shared/log'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
+  ATTESTOR,
   clearCachedProfiles,
   databaseUrl,
   NOW,
@@ -47,6 +48,7 @@ describe.skipIf(url === undefined)('SC-001 — connecting a wallet until the lim
     app = createApp({
       db,
       logger: createLogger({ service: 'limit-latency', level: 'fatal' }),
+      attestor: ATTESTOR,
       // Замір ходить у процесі, без браузера, тож жодне походження йому не
       // потрібне — але список порожнім бути не може.
       webOrigins: ['http://localhost:5173'],

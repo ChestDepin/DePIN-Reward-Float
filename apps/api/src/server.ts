@@ -1,6 +1,11 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import type { Logger } from 'pino'
+import {
+  type AttestationJournal,
+  type Attestor,
+  createAttestationRoutes,
+} from './routes/attestations.ts'
 import { DataUnavailable, errorBody } from './routes/errors.ts'
 import { createHealthRoutes, type PayoutActivitySource } from './routes/health.ts'
 import { type CreditProfileStore, createLimitRoutes } from './routes/limit.ts'
@@ -11,6 +16,8 @@ export type ServerDeps = {
   payouts: PayoutHistorySource
   profiles: CreditProfileStore
   activity: PayoutActivitySource
+  journal: AttestationJournal
+  attestor: Attestor
   webOrigins: readonly string[]
   // Годинник параметром: період історії — останні 12 місяців, і тест на межі
   // місяця інакше падав би раз на місяць.
@@ -22,6 +29,8 @@ export function createServer({
   payouts,
   profiles,
   activity,
+  journal,
+  attestor,
   webOrigins,
   now,
 }: ServerDeps): Hono {
@@ -35,6 +44,7 @@ export function createServer({
   app.route('/', createHealthRoutes({ activity, now }))
   app.route('/v1', createOperatorRoutes({ payouts, now }))
   app.route('/v1', createLimitRoutes({ payouts, profiles, now }))
+  app.route('/v1', createAttestationRoutes({ payouts, profiles, journal, attestor, now }))
 
   app.notFound((c) => c.json(errorBody('NOT_FOUND', 'route not found'), 404))
 
