@@ -5,6 +5,11 @@
 // і перевіряється через Ed25519-інструкцію в тій самій транзакції (FR-012a).
 use anchor_lang::prelude::*;
 
+pub mod error;
+pub mod state;
+
+pub use state::*;
+
 declare_id!("RewardFLoat11111111111111111111111111111111");
 
 #[program]
