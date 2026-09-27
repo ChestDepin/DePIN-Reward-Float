@@ -7,6 +7,9 @@ use crate::error::RewardFloatError;
 /// Seed prefix of the pool PDA: `["pool", stable_mint]`.
 pub const POOL_SEED: &[u8] = b"pool";
 
+/// Seed prefix of the vault token account PDA: `["vault", pool]`.
+pub const VAULT_SEED: &[u8] = b"vault";
+
 #[account]
 #[derive(InitSpace)]
 pub struct Pool {

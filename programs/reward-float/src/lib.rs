@@ -6,11 +6,19 @@
 use anchor_lang::prelude::*;
 
 pub mod error;
+pub mod instructions;
 pub mod state;
 
+use instructions::*;
 pub use state::*;
 
 declare_id!("RewardFLoat11111111111111111111111111111111");
 
 #[program]
-pub mod reward_float {}
+pub mod reward_float {
+    use super::*;
+
+    pub fn initialize_pool(ctx: Context<InitializePool>, attestor: Pubkey) -> Result<()> {
+        handle_initialize_pool(ctx, attestor)
+    }
+}

@@ -10,4 +10,6 @@ pub enum RewardFloatError {
     AttestationNonceTooOld,
     #[msg("attestation nonce was already used")]
     AttestationNonceAlreadyUsed,
+    #[msg("only the upgrade authority of this program can create a pool")]
+    NotUpgradeAuthority,
 }
