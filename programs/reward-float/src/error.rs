@@ -16,4 +16,20 @@ pub enum RewardFloatError {
     NotPoolAuthority,
     #[msg("the attestor key cannot be the all-zero key")]
     InvalidAttestor,
+    #[msg(
+        "the instruction right before this one must be the ed25519 check of a limit attestation"
+    )]
+    AttestationMissing,
+    #[msg("the limit attestation or its ed25519 check is not laid out as expected")]
+    AttestationMalformed,
+    #[msg("the limit attestation is not signed by the pool attestor")]
+    AttestationWrongSigner,
+    #[msg("the limit attestation was issued for another operator")]
+    AttestationWrongOperator,
+    #[msg("the limit attestation has expired")]
+    AttestationExpired,
+    #[msg("the limit attestation claims to stay valid for longer than the program allows")]
+    AttestationValidityTooLong,
+    #[msg("the limit attestation was computed from data older than a day")]
+    AttestationStale,
 }

@@ -27,6 +27,10 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [dependencies]
 anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
 anchor-spl = "0.32.1"
+# Anchor 0.32 re-exports the instructions sysvar only as deprecated and has no
+# ed25519 program id at all. Both are the 2.x line anchor-lang already pulls in.
+solana-instructions-sysvar = "2.2.2"
+solana-sdk-ids = "2.2.1"
 
 [dev-dependencies]
 # Плетіння акаунтів (сіди, делегування, CPI до токен-програми) перевіряє лише
