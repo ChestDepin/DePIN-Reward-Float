@@ -1,4 +1,4 @@
-use std::sync::Once;
+mod common;
 
 use anchor_lang::prelude::Pubkey;
 use anchor_lang::solana_program::bpf_loader_upgradeable;
@@ -6,43 +6,13 @@ use anchor_lang::solana_program::program_option::COption;
 use anchor_lang::solana_program::program_pack::Pack;
 use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
 use anchor_spl::token::spl_token;
+use common::{account, custom, m, metas, mollusk, wallet, LAMPORTS_PER_SOL};
 use mollusk_svm::result::InstructionResult;
-use mollusk_svm::Mollusk;
 use reward_float::error::RewardFloatError;
 use reward_float::{Pool, POOL_SEED, VAULT_SEED};
 use solana_account::Account;
 use solana_instruction::error::InstructionError;
-use solana_instruction::{AccountMeta, Instruction};
-
-const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
-
-static SBF_OUT_DIR: Once = Once::new();
-
-// Mollusk looks for the .so in tests/fixtures, $SBF_OUT_DIR and the cwd, never in
-// target/deploy, and `cargo test -p` runs from the package directory. It also does not
-// build it: after touching src/, run `anchor build` first or this tests the old bytecode.
-fn mollusk() -> Mollusk {
-    SBF_OUT_DIR.call_once(|| {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/deploy");
-        assert!(
-            std::path::Path::new(dir).join("reward_float.so").exists(),
-            "{dir}/reward_float.so is missing: run scripts/wsl-build.sh first"
-        );
-        std::env::set_var("SBF_OUT_DIR", dir);
-    });
-    let mut mollusk = Mollusk::new(&m(&reward_float::ID), "reward_float");
-    mollusk_svm_programs_token::token::add_program(&mut mollusk);
-    mollusk
-}
-
-// anchor-lang 0.32 and mollusk 0.15 link different solana-pubkey majors.
-fn m(key: &Pubkey) -> solana_pubkey::Pubkey {
-    solana_pubkey::Pubkey::new_from_array(key.to_bytes())
-}
-
-fn wallet() -> Account {
-    Account::new(10 * LAMPORTS_PER_SOL, 0, &solana_pubkey::Pubkey::default())
-}
+use solana_instruction::Instruction;
 
 fn mint_account() -> Account {
     let mut data = vec![0; spl_token::state::Mint::LEN];
@@ -120,7 +90,7 @@ impl Setup {
     }
 
     fn instruction(&self) -> Instruction {
-        let metas = reward_float::accounts::InitializePool {
+        let accounts = reward_float::accounts::InitializePool {
             authority: self.signer,
             pool: self.pool,
             stable_mint: self.stable_mint,
@@ -129,17 +99,10 @@ impl Setup {
             token_program: spl_token::ID,
             system_program: anchor_lang::system_program::ID,
         }
-        .to_account_metas(None)
-        .into_iter()
-        .map(|meta| AccountMeta {
-            pubkey: m(&meta.pubkey),
-            is_signer: meta.is_signer,
-            is_writable: meta.is_writable,
-        })
-        .collect();
+        .to_account_metas(None);
         Instruction {
             program_id: m(&reward_float::ID),
-            accounts: metas,
+            accounts: metas(accounts),
             data: reward_float::instruction::InitializePool {
                 attestor: self.attestor,
             }
@@ -165,14 +128,6 @@ impl Setup {
     fn run(&self) -> InstructionResult {
         mollusk().process_instruction(&self.instruction(), &self.accounts())
     }
-}
-
-fn account<'a>(result: &'a InstructionResult, key: &Pubkey) -> &'a Account {
-    result.get_account(&m(key)).unwrap()
-}
-
-fn custom(err: RewardFloatError) -> Result<(), InstructionError> {
-    Err(InstructionError::Custom(err.into()))
 }
 
 #[test]

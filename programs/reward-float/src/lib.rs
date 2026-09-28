@@ -21,4 +21,8 @@ pub mod reward_float {
     pub fn initialize_pool(ctx: Context<InitializePool>, attestor: Pubkey) -> Result<()> {
         handle_initialize_pool(ctx, attestor)
     }
+
+    pub fn set_attestor(ctx: Context<SetAttestor>, attestor: Pubkey) -> Result<()> {
+        handle_set_attestor(ctx, attestor)
+    }
 }

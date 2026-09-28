@@ -12,4 +12,8 @@ pub enum RewardFloatError {
     AttestationNonceAlreadyUsed,
     #[msg("only the upgrade authority of this program can create a pool")]
     NotUpgradeAuthority,
+    #[msg("only the pool authority can replace the attestor")]
+    NotPoolAuthority,
+    #[msg("the attestor key cannot be the all-zero key")]
+    InvalidAttestor,
 }
