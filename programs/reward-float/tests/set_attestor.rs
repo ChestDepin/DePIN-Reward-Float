@@ -21,6 +21,8 @@ fn pool_state(authority: Pubkey, attestor: Pubkey) -> Pool {
         total_borrowed: 400_000,
         accrued_interest: 1_234,
         overdue_principal: 5,
+        base_apr_bps: 800,
+        slope_apr_bps: 2_000,
         bump: 254,
     }
 }

@@ -6,35 +6,13 @@ use anchor_lang::solana_program::program_option::COption;
 use anchor_lang::solana_program::program_pack::Pack;
 use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
 use anchor_spl::token::spl_token;
-use common::{account, custom, m, metas, mollusk, wallet, LAMPORTS_PER_SOL};
+use common::{account, custom, m, metas, mint_account, mollusk, wallet, LAMPORTS_PER_SOL};
 use mollusk_svm::result::InstructionResult;
 use reward_float::error::RewardFloatError;
 use reward_float::{Pool, POOL_SEED, VAULT_SEED};
 use solana_account::Account;
 use solana_instruction::error::InstructionError;
 use solana_instruction::Instruction;
-
-fn mint_account() -> Account {
-    let mut data = vec![0; spl_token::state::Mint::LEN];
-    spl_token::state::Mint::pack(
-        spl_token::state::Mint {
-            mint_authority: COption::Some(Pubkey::new_unique()),
-            supply: 0,
-            decimals: 6,
-            is_initialized: true,
-            freeze_authority: COption::None,
-        },
-        &mut data,
-    )
-    .unwrap();
-    Account {
-        lamports: LAMPORTS_PER_SOL,
-        data,
-        owner: m(&spl_token::ID),
-        executable: false,
-        rent_epoch: 0,
-    }
-}
 
 fn program_data_address(program_id: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(&[program_id.as_ref()], &bpf_loader_upgradeable::ID).0
@@ -70,6 +48,8 @@ struct Setup {
     vault: Pubkey,
     program_data: Pubkey,
     attestor: Pubkey,
+    base_apr_bps: u16,
+    slope_apr_bps: u16,
 }
 
 impl Setup {
@@ -86,6 +66,8 @@ impl Setup {
             vault: Pubkey::find_program_address(&[VAULT_SEED, pool.as_ref()], &reward_float::ID).0,
             program_data: program_data_address(&reward_float::ID),
             attestor: Pubkey::new_unique(),
+            base_apr_bps: 800,
+            slope_apr_bps: 2_000,
         }
     }
 
@@ -105,6 +87,8 @@ impl Setup {
             accounts: metas(accounts),
             data: reward_float::instruction::InitializePool {
                 attestor: self.attestor,
+                base_apr_bps: self.base_apr_bps,
+                slope_apr_bps: self.slope_apr_bps,
             }
             .data(),
         }
@@ -146,6 +130,8 @@ fn the_upgrade_authority_creates_an_empty_pool_with_its_vault() {
     assert_eq!(pool.total_borrowed, 0);
     assert_eq!(pool.accrued_interest, 0);
     assert_eq!(pool.overdue_principal, 0);
+    assert_eq!(pool.base_apr_bps, 800);
+    assert_eq!(pool.slope_apr_bps, 2_000);
     let (_, bump) =
         Pubkey::find_program_address(&[POOL_SEED, setup.stable_mint.as_ref()], &reward_float::ID);
     assert_eq!(pool.bump, bump);
@@ -184,6 +170,23 @@ fn program_data_of_another_program_is_refused() {
     let result = setup.run();
     let seeds: u32 = anchor_lang::error::ErrorCode::ConstraintSeeds.into();
     assert_eq!(result.raw_result, Err(InstructionError::Custom(seeds)));
+}
+
+#[test]
+fn a_rate_curve_whose_top_does_not_fit_in_u16_is_refused() {
+    // A full pool would quote base + slope, and a rate that does not fit the loan's
+    // u16 field would fail every borrow near the top instead of failing here, once.
+    let mut setup = Setup::by_upgrade_authority();
+    setup.base_apr_bps = 1;
+    setup.slope_apr_bps = u16::MAX;
+    let result = setup.run();
+    assert_eq!(
+        result.raw_result,
+        custom(RewardFloatError::InvalidRateCurve)
+    );
+
+    setup.base_apr_bps = 0;
+    assert_eq!(setup.run().raw_result, Ok(()));
 }
 
 #[test]

@@ -7,6 +7,18 @@ use crate::error::RewardFloatError;
 /// Seed prefix of the loan PDA: `["loan", operator, nonce]`.
 pub const LOAN_SEED: &[u8] = b"loan";
 
+/// One repayment period. A loan is repaid in equal instalments of principal, one per
+/// period, and its term is a whole number of them.
+pub const REPAYMENT_PERIOD: i64 = 30 * 24 * 60 * 60;
+
+/// Longest term a loan can be issued for, in periods.
+///
+/// A credit limit is at most two months of an operator's reward flow, so with half of
+/// every payout withheld a loan at the limit is repaid in about four periods. Six leave
+/// room for a thinner month without reaching further out than past payouts are trusted
+/// to predict future ones.
+pub const MAX_TERM_PERIODS: u8 = 6;
+
 #[derive(AnchorSerialize, AnchorDeserialize, InitSpace, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LoanStatus {
     Active,
@@ -52,6 +64,21 @@ impl Loan {
         self.outstanding
             .checked_add(self.accrued_interest)
             .ok_or_else(|| error!(RewardFloatError::MathOverflow))
+    }
+
+    /// Principal the schedule fixed at issue expects to be repaid by `at` (FR-009): one
+    /// equal instalment per period that has fully passed, all of it once the term is over.
+    ///
+    /// Nothing is stored per instalment. The schedule follows from the principal and the
+    /// two dates, so a partial repayment moves the operator along it without rewriting it.
+    pub fn principal_due_by(&self, at: i64) -> u64 {
+        let periods = (self.due_at - self.opened_at) / REPAYMENT_PERIOD;
+        if periods <= 0 {
+            return self.principal;
+        }
+        let passed = (at.saturating_sub(self.opened_at) / REPAYMENT_PERIOD).clamp(0, periods);
+        // Never more than the principal, since `passed` is clamped to `periods`.
+        ((u128::from(self.principal) * passed as u128).div_ceil(periods as u128)) as u64
     }
 
     /// Whether this loan still counts towards the operator's debt.
@@ -116,6 +143,53 @@ mod tests {
         assert!(loan.is_open(), "an overdue loan still owes money");
         loan.status = LoanStatus::Repaid;
         assert!(!loan.is_open());
+    }
+
+    fn three_period_loan() -> Loan {
+        let mut loan = loan();
+        loan.principal = 1_000_000;
+        loan.due_at = loan.opened_at + 3 * REPAYMENT_PERIOD;
+        loan
+    }
+
+    #[test]
+    fn nothing_is_due_before_the_first_period_is_over() {
+        let loan = three_period_loan();
+        assert_eq!(loan.principal_due_by(loan.opened_at - 1), 0);
+        assert_eq!(loan.principal_due_by(loan.opened_at), 0);
+        assert_eq!(
+            loan.principal_due_by(loan.opened_at + REPAYMENT_PERIOD - 1),
+            0
+        );
+    }
+
+    #[test]
+    fn each_period_that_passes_makes_one_instalment_due_rounded_up() {
+        let loan = three_period_loan();
+        assert_eq!(
+            loan.principal_due_by(loan.opened_at + REPAYMENT_PERIOD),
+            333_334
+        );
+        assert_eq!(
+            loan.principal_due_by(loan.opened_at + 2 * REPAYMENT_PERIOD),
+            666_667
+        );
+    }
+
+    #[test]
+    fn all_of_the_principal_is_due_at_the_end_of_the_term_and_after() {
+        let loan = three_period_loan();
+        assert_eq!(loan.principal_due_by(loan.due_at), 1_000_000);
+        assert_eq!(loan.principal_due_by(i64::MAX), 1_000_000);
+    }
+
+    #[test]
+    fn a_one_period_loan_is_due_in_one_piece() {
+        let mut loan = three_period_loan();
+        loan.principal = u64::MAX;
+        loan.due_at = loan.opened_at + REPAYMENT_PERIOD;
+        assert_eq!(loan.principal_due_by(loan.due_at - 1), 0);
+        assert_eq!(loan.principal_due_by(loan.due_at), u64::MAX);
     }
 
     #[test]

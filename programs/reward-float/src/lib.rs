@@ -18,11 +18,27 @@ declare_id!("RewardFLoat11111111111111111111111111111111");
 pub mod reward_float {
     use super::*;
 
-    pub fn initialize_pool(ctx: Context<InitializePool>, attestor: Pubkey) -> Result<()> {
-        handle_initialize_pool(ctx, attestor)
+    pub fn initialize_pool(
+        ctx: Context<InitializePool>,
+        attestor: Pubkey,
+        base_apr_bps: u16,
+        slope_apr_bps: u16,
+    ) -> Result<()> {
+        handle_initialize_pool(ctx, attestor, base_apr_bps, slope_apr_bps)
     }
 
     pub fn set_attestor(ctx: Context<SetAttestor>, attestor: Pubkey) -> Result<()> {
         handle_set_attestor(ctx, attestor)
+    }
+
+    pub fn borrow(
+        ctx: Context<Borrow>,
+        nonce: u64,
+        amount: u64,
+        term_periods: u8,
+        sweep_bps: u16,
+        max_apr_bps: u16,
+    ) -> Result<()> {
+        handle_borrow(ctx, nonce, amount, term_periods, sweep_bps, max_apr_bps)
     }
 }

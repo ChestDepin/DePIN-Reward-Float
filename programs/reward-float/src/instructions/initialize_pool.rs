@@ -48,7 +48,16 @@ pub struct InitializePool<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handle_initialize_pool(ctx: Context<InitializePool>, attestor: Pubkey) -> Result<()> {
+pub fn handle_initialize_pool(
+    ctx: Context<InitializePool>,
+    attestor: Pubkey,
+    base_apr_bps: u16,
+    slope_apr_bps: u16,
+) -> Result<()> {
+    require!(
+        u32::from(base_apr_bps) + u32::from(slope_apr_bps) <= u32::from(u16::MAX),
+        RewardFloatError::InvalidRateCurve
+    );
     ctx.accounts.pool.set_inner(Pool {
         authority: ctx.accounts.authority.key(),
         attestor,
@@ -59,6 +68,8 @@ pub fn handle_initialize_pool(ctx: Context<InitializePool>, attestor: Pubkey) ->
         total_borrowed: 0,
         accrued_interest: 0,
         overdue_principal: 0,
+        base_apr_bps,
+        slope_apr_bps,
         bump: ctx.bumps.pool,
     });
     Ok(())

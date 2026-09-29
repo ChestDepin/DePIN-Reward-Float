@@ -32,4 +32,22 @@ pub enum RewardFloatError {
     AttestationValidityTooLong,
     #[msg("the limit attestation was computed from data older than a day")]
     AttestationStale,
+    #[msg("the base rate plus the utilisation premium must fit in u16 basis points")]
+    InvalidRateCurve,
+    #[msg("the loan amount must be greater than zero")]
+    InvalidAmount,
+    #[msg("the loan term must be between one and the maximum number of periods")]
+    InvalidTerm,
+    #[msg("the share of rewards withheld must be between 1 and 10000 basis points")]
+    InvalidSweepShare,
+    #[msg("an operator with an overdue loan cannot borrow")]
+    OperatorOverdue,
+    #[msg("the loan would take the operator's debt over the attested credit limit")]
+    CreditLimitExceeded,
+    #[msg("the pool does not have enough free liquidity for this loan")]
+    InsufficientLiquidity,
+    #[msg("the rate for this loan is above the maximum the operator agreed to")]
+    RateAboveMaximum,
+    #[msg("the loan nonce is not the nonce of the limit attestation")]
+    AttestationNonceMismatch,
 }

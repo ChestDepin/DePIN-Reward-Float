@@ -1,6 +1,12 @@
+// Every test binary compiles its own copy of this module and uses only part of it.
+#![allow(dead_code)]
+
 use std::sync::Once;
 
 use anchor_lang::prelude::Pubkey;
+use anchor_lang::solana_program::program_option::COption;
+use anchor_lang::solana_program::program_pack::Pack;
+use anchor_spl::token::spl_token;
 use mollusk_svm::result::InstructionResult;
 use mollusk_svm::Mollusk;
 use reward_float::error::RewardFloatError;
@@ -55,4 +61,51 @@ pub fn account<'a>(result: &'a InstructionResult, key: &Pubkey) -> &'a Account {
 
 pub fn custom(err: RewardFloatError) -> Result<(), InstructionError> {
     Err(InstructionError::Custom(err.into()))
+}
+
+pub fn mint_account() -> Account {
+    let mut data = vec![0; spl_token::state::Mint::LEN];
+    spl_token::state::Mint::pack(
+        spl_token::state::Mint {
+            mint_authority: COption::Some(Pubkey::new_unique()),
+            supply: 0,
+            decimals: 6,
+            is_initialized: true,
+            freeze_authority: COption::None,
+        },
+        &mut data,
+    )
+    .unwrap();
+    Account {
+        lamports: LAMPORTS_PER_SOL,
+        data,
+        owner: m(&spl_token::ID),
+        executable: false,
+        rent_epoch: 0,
+    }
+}
+
+pub fn token_account(mint: &Pubkey, owner: &Pubkey, amount: u64) -> Account {
+    let mut data = vec![0; spl_token::state::Account::LEN];
+    spl_token::state::Account::pack(
+        spl_token::state::Account {
+            mint: *mint,
+            owner: *owner,
+            amount,
+            delegate: COption::None,
+            state: spl_token::state::AccountState::Initialized,
+            is_native: COption::None,
+            delegated_amount: 0,
+            close_authority: COption::None,
+        },
+        &mut data,
+    )
+    .unwrap();
+    Account {
+        lamports: LAMPORTS_PER_SOL,
+        data,
+        owner: m(&spl_token::ID),
+        executable: false,
+        rent_epoch: 0,
+    }
 }

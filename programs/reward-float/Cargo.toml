@@ -35,7 +35,11 @@ solana-sdk-ids = "2.2.1"
 [dev-dependencies]
 # Плетіння акаунтів (сіди, делегування, CPI до токен-програми) перевіряє лише
 # справжній рантайм. litesvm тут не збирається з anchor 0.32.1 (E0027 на touched_flags).
-mollusk-svm = "0.15.0"
+# `precompiles` runs the ed25519 check of a borrow transaction for real, so the tests
+# go through the precompile and an instructions sysvar the runtime fills in itself.
+mollusk-svm = { version = "0.15.0", features = ["precompiles"] }
+# Signs limit attestations in the tests, as the api does with @noble/ed25519.
+ed25519-dalek = "2.2.0"
 # Видача, погашення й утримання все переказують SPL-токени: без ELF токен-програми
 # жодна з інструкцій не доходить до кінця.
 mollusk-svm-programs-token = { version = "0.15.0", default-features = false, features = ["token"] }
