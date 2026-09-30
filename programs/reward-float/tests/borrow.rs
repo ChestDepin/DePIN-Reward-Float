@@ -159,6 +159,7 @@ struct Setup {
     destination: Pubkey,
     destination_mint: Pubkey,
     operator_state: Option<OperatorAccount>,
+    loan_account: Account,
     attestation: Attestation,
     signature_check_first: bool,
     forged: bool,
@@ -202,6 +203,7 @@ impl Setup {
             destination: Pubkey::new_unique(),
             destination_mint: stable_mint,
             operator_state: None,
+            loan_account: Account::default(),
             attestation: Attestation {
                 signer: attestor,
                 operator,
@@ -277,7 +279,7 @@ impl Setup {
             (m(&self.signer), wallet()),
             (m(&self.pool), program_account(serialize(&self.pool_state))),
             (m(&self.operator_account()), operator_account),
-            (m(&self.loan()), Account::default()),
+            (m(&self.loan()), self.loan_account.clone()),
             (
                 m(&self.vault),
                 token_account(&self.stable_mint, &self.pool, self.vault_balance),
@@ -553,4 +555,129 @@ fn a_forged_signature_fails_the_transaction_in_the_precompile() {
         "the ed25519 check itself refuses, before borrow runs"
     );
     assert_eq!(account(&result, &setup.loan()).data.len(), 0);
+}
+
+#[test]
+fn replaying_a_spent_attestation_is_refused_by_the_nonce_mask() {
+    // The same attestation in a rebuilt transaction, against the state the first loan
+    // left behind: what a wallet does when it retries a borrow that did land.
+    let setup = Setup::first_loan();
+    let first = setup.run();
+    assert_eq!(outcome(&first), Ok(()));
+
+    let mut replay = Setup::first_loan();
+    replay.signer = setup.signer;
+    replay.attestation.operator = setup.signer;
+    replay.destination = setup.destination;
+    replay.reward_mint = setup.reward_mint;
+    replay.stable_mint = setup.stable_mint;
+    replay.destination_mint = setup.stable_mint;
+    replay.pool = setup.pool;
+    replay.vault = setup.vault;
+    replay.pool_state = deserialize(&first, &setup.pool);
+    replay.vault_balance = token_balance(&first, &setup.vault);
+    replay.operator_state = Some(deserialize(&first, &setup.operator_account()));
+    replay.loan_account = account(&first, &setup.loan()).clone();
+    let result = replay.run();
+    assert_eq!(
+        outcome(&result),
+        refused(RewardFloatError::AttestationNonceAlreadyUsed)
+    );
+}
+
+#[test]
+fn a_nonce_below_the_floor_is_refused_as_too_old() {
+    let mut setup = Setup::first_loan();
+    let mut existing = fresh_operator_account(setup.signer);
+    existing.nonce_floor = 100;
+    setup.operator_state = Some(existing);
+    setup.attestation.nonce = 99;
+    setup.nonce = 99;
+    let result = setup.run();
+    assert_eq!(
+        outcome(&result),
+        refused(RewardFloatError::AttestationNonceTooOld)
+    );
+}
+
+#[test]
+fn two_attestations_may_be_spent_out_of_order() {
+    let mut setup = Setup::first_loan();
+    let mut existing = fresh_operator_account(setup.signer);
+    existing.total_debt = 1;
+    existing.open_loans = 1;
+    existing.used_nonces[0] = 1 << 8;
+    setup.operator_state = Some(existing);
+    setup.max_apr_bps = u16::MAX;
+    let result = setup.run();
+    assert_eq!(outcome(&result), Ok(()));
+    let operator: OperatorAccount = deserialize(&result, &setup.operator_account());
+    assert_eq!(operator.used_nonces[0], (1 << 7) | (1 << 8));
+}
+
+#[test]
+fn a_far_nonce_slides_the_window_and_the_account_keeps_it() {
+    let mut setup = Setup::first_loan();
+    let mut existing = fresh_operator_account(setup.signer);
+    existing.total_debt = AMOUNT;
+    existing.open_loans = 1;
+    existing.used_nonces[0] = 1 << 7;
+    setup.operator_state = Some(existing);
+    setup.pool_state.total_borrowed = AMOUNT;
+    setup.vault_balance = DEPOSITS - AMOUNT;
+    setup.attestation.nonce = 300;
+    setup.nonce = 300;
+    setup.amount = LIMIT - AMOUNT;
+    setup.max_apr_bps = u16::MAX;
+    let result = setup.run();
+    assert_eq!(outcome(&result), Ok(()));
+
+    let operator: OperatorAccount = deserialize(&result, &setup.operator_account());
+    let mut expected = fresh_operator_account(setup.signer);
+    expected.total_debt = LIMIT;
+    expected.open_loans = 2;
+    // The window now ends on 300, so it starts at 45 and 7 fell out of it.
+    expected.nonce_floor = 45;
+    expected.used_nonces = [0, 0, 0, 1 << 63];
+    assert_eq!(serialize(&operator), serialize(&expected));
+}
+
+#[test]
+fn lamports_sent_to_the_loan_address_in_advance_do_not_block_the_loan() {
+    // Loan addresses follow from public, dense nonces, so anyone can fund the next one
+    // before the operator gets there. Creating the account must not trip over that.
+    let clean = Setup::first_loan();
+    let rent = account(&clean.run(), &clean.loan()).lamports;
+
+    let mut setup = Setup::first_loan();
+    setup.loan_account = Account {
+        lamports: 1_000_000,
+        ..Account::default()
+    };
+    assert!(setup.loan_account.lamports < rent);
+    let result = setup.run();
+    assert_eq!(outcome(&result), Ok(()));
+    let created = account(&result, &setup.loan());
+    assert_eq!(created.owner, m(&reward_float::ID));
+    assert_eq!(
+        created.lamports, rent,
+        "topped up to rent, not charged twice"
+    );
+    let loan: Loan = deserialize(&result, &setup.loan());
+    assert_eq!(loan.nonce, 7);
+}
+
+#[test]
+fn an_existing_loan_at_the_address_is_a_second_lock_behind_the_mask() {
+    // The mask and the loan address can only disagree in a state made up for the test,
+    // but if they ever do, the loan that is there must not be written over.
+    let mut setup = Setup::first_loan();
+    setup.operator_state = Some(fresh_operator_account(setup.signer));
+    let other = Setup::first_loan();
+    let mut existing: Loan = deserialize(&other.run(), &other.loan());
+    existing.operator = setup.signer;
+    setup.loan_account = program_account(serialize(&existing));
+    let result = setup.run();
+    // AccountAlreadyInUse, raised by the System Program under our CPI.
+    assert_eq!(outcome(&result), Err((BORROW, InstructionError::Custom(0))));
 }

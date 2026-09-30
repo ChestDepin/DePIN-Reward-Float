@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::system_program::{self, Allocate, Assign, CreateAccount};
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 use solana_sdk_ids::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
@@ -31,14 +32,16 @@ pub struct Borrow<'info> {
     )]
     pub operator_account: Box<Account<'info, OperatorAccount>>,
 
+    // Created in the handler, after the nonce is spent: Anchor runs every `init` before
+    // any handler code, so an `init` here would refuse an exact replay as an address
+    // already in use before the nonce mask ever saw it (FR-012b).
+    /// CHECK: the loan PDA of this operator and nonce, created by `borrow` itself.
     #[account(
-        init,
-        payer = operator,
-        space = 8 + Loan::INIT_SPACE,
+        mut,
         seeds = [LOAN_SEED, operator.key().as_ref(), &nonce.to_le_bytes()],
         bump,
     )]
-    pub loan: Box<Account<'info, Loan>>,
+    pub loan: UncheckedAccount<'info>,
 
     #[account(mut)]
     pub vault: Box<Account<'info, TokenAccount>>,
@@ -125,7 +128,19 @@ pub fn handle_borrow(
         .checked_mul(REPAYMENT_PERIOD)
         .and_then(|term| now.checked_add(term))
         .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
-    ctx.accounts.loan.set_inner(Loan {
+    let loan_bump = ctx.bumps.loan;
+    create_loan_account(
+        &ctx.accounts.operator,
+        &ctx.accounts.loan,
+        &ctx.accounts.system_program,
+        &[
+            LOAN_SEED,
+            operator.as_ref(),
+            &nonce.to_le_bytes(),
+            &[loan_bump],
+        ],
+    )?;
+    let loan = Loan {
         operator,
         pool: pool.key(),
         reward_mint: ctx.accounts.reward_mint.key(),
@@ -139,8 +154,9 @@ pub fn handle_borrow(
         apr_bps,
         sweep_bps,
         status: LoanStatus::Active,
-        bump: ctx.bumps.loan,
-    });
+        bump: loan_bump,
+    };
+    loan.try_serialize(&mut &mut ctx.accounts.loan.try_borrow_mut_data()?[..])?;
 
     let stable_mint = pool.stable_mint;
     let signer: &[&[&[u8]]] = &[&[POOL_SEED, stable_mint.as_ref(), &[pool.bump]]];
@@ -155,5 +171,69 @@ pub fn handle_borrow(
             signer,
         ),
         amount,
+    )
+}
+
+// What Anchor's `init` does, moved behind the nonce check. The address is known in
+// advance, so lamports someone sent there beforehand are topped up and taken over
+// rather than letting them block the loan. An account that already holds data is
+// refused by the System Program, which keeps the loan address a second lock.
+fn create_loan_account<'info>(
+    payer: &Signer<'info>,
+    loan: &UncheckedAccount<'info>,
+    system: &Program<'info, System>,
+    seeds: &[&[u8]],
+) -> Result<()> {
+    let space = 8 + Loan::INIT_SPACE;
+    let rent = Rent::get()?.minimum_balance(space);
+    let signer = &[seeds];
+    let held = loan.lamports();
+    if held == 0 {
+        return system_program::create_account(
+            CpiContext::new_with_signer(
+                system.to_account_info(),
+                CreateAccount {
+                    from: payer.to_account_info(),
+                    to: loan.to_account_info(),
+                },
+                signer,
+            ),
+            rent,
+            space as u64,
+            &crate::ID,
+        );
+    }
+
+    if held < rent {
+        system_program::transfer(
+            CpiContext::new(
+                system.to_account_info(),
+                system_program::Transfer {
+                    from: payer.to_account_info(),
+                    to: loan.to_account_info(),
+                },
+            ),
+            rent - held,
+        )?;
+    }
+    system_program::allocate(
+        CpiContext::new_with_signer(
+            system.to_account_info(),
+            Allocate {
+                account_to_allocate: loan.to_account_info(),
+            },
+            signer,
+        ),
+        space as u64,
+    )?;
+    system_program::assign(
+        CpiContext::new_with_signer(
+            system.to_account_info(),
+            Assign {
+                account_to_assign: loan.to_account_info(),
+            },
+            signer,
+        ),
+        &crate::ID,
     )
 }
