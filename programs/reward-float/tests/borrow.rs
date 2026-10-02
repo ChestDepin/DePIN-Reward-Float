@@ -10,12 +10,12 @@ use mollusk_svm::result::types::{TransactionProgramResult, TransactionResult};
 use reward_float::error::RewardFloatError;
 use reward_float::instructions::verify_attestation::LIMIT_ATTESTATION_TAG;
 use reward_float::{
-    Loan, LoanStatus, OperatorAccount, Pool, LOAN_SEED, NONCE_WINDOW_WORDS, OPERATOR_SEED,
-    POOL_SEED, REPAYMENT_PERIOD, VAULT_SEED,
+    Loan, LoanStatus, OperatorAccount, Pool, LOAN_SEED, MAX_OPEN_LOANS, NONCE_WINDOW_WORDS,
+    OPERATOR_SEED, POOL_SEED, REPAYMENT_PERIOD, SECONDS_PER_YEAR, VAULT_SEED,
 };
 use solana_account::Account;
 use solana_instruction::error::InstructionError;
-use solana_instruction::Instruction;
+use solana_instruction::{AccountMeta, Instruction};
 use solana_sdk_ids::{ed25519_program, sysvar};
 
 const NOW: i64 = 1_790_157_600;
@@ -160,6 +160,8 @@ struct Setup {
     destination_mint: Pubkey,
     operator_state: Option<OperatorAccount>,
     loan_account: Account,
+    // Passed after the named accounts, as `borrow` expects every open loan to be.
+    open_loans: Vec<(Pubkey, Account, bool)>,
     attestation: Attestation,
     signature_check_first: bool,
     forged: bool,
@@ -204,6 +206,7 @@ impl Setup {
             destination_mint: stable_mint,
             operator_state: None,
             loan_account: Account::default(),
+            open_loans: Vec::new(),
             attestation: Attestation {
                 signer: attestor,
                 operator,
@@ -235,6 +238,40 @@ impl Setup {
         .0
     }
 
+    fn loan_at(&self, nonce: u64) -> (Pubkey, u8) {
+        Pubkey::find_program_address(
+            &[LOAN_SEED, self.signer.as_ref(), &nonce.to_le_bytes()],
+            &reward_float::ID,
+        )
+    }
+
+    // An open loan of this operator in this pool, with interest up to date at NOW.
+    fn existing_loan(&self, nonce: u64, outstanding: u64) -> Loan {
+        Loan {
+            operator: self.signer,
+            pool: self.pool,
+            reward_mint: self.reward_mint,
+            nonce,
+            principal: outstanding,
+            outstanding,
+            accrued_interest: 0,
+            interest_remainder: 0,
+            opened_at: NOW - 86_400,
+            due_at: NOW - 86_400 + 3 * REPAYMENT_PERIOD,
+            last_accrual_at: NOW,
+            apr_bps: APR,
+            sweep_bps: 5_000,
+            status: LoanStatus::Active,
+            bump: self.loan_at(nonce).1,
+        }
+    }
+
+    fn pass_open_loan(&mut self, loan: &Loan) {
+        let address = self.loan_at(loan.nonce).0;
+        self.open_loans
+            .push((address, program_account(serialize(loan)), true));
+    }
+
     fn instruction(&self) -> Instruction {
         let accounts = reward_float::accounts::Borrow {
             operator: self.signer,
@@ -249,9 +286,19 @@ impl Setup {
             system_program: anchor_lang::system_program::ID,
         }
         .to_account_metas(None);
+        let mut accounts = metas(accounts);
+        accounts.extend(
+            self.open_loans
+                .iter()
+                .map(|(address, _, writable)| AccountMeta {
+                    pubkey: m(address),
+                    is_signer: false,
+                    is_writable: *writable,
+                }),
+        );
         Instruction {
             program_id: m(&reward_float::ID),
-            accounts: metas(accounts),
+            accounts,
             data: reward_float::instruction::Borrow {
                 nonce: self.nonce,
                 amount: self.amount,
@@ -275,7 +322,7 @@ impl Setup {
             Some(state) => program_account(serialize(state)),
             None => Account::default(),
         };
-        let accounts = vec![
+        let mut accounts = vec![
             (m(&self.signer), wallet()),
             (m(&self.pool), program_account(serialize(&self.pool_state))),
             (m(&self.operator_account()), operator_account),
@@ -292,6 +339,11 @@ impl Setup {
             mollusk_svm_programs_token::token::keyed_account(),
             mollusk_svm::program::keyed_account_for_system_program(),
         ];
+        for (address, account, _) in &self.open_loans {
+            if !accounts.iter().any(|(key, _)| *key == m(address)) {
+                accounts.push((m(address), account.clone()));
+            }
+        }
         let mut mollusk = mollusk();
         mollusk.sysvars.clock.unix_timestamp = self.now;
         mollusk.process_transaction_instructions(&instructions, &accounts, None)
@@ -324,6 +376,7 @@ fn the_first_loan_opens_the_operator_account_and_fixes_the_terms() {
             principal: AMOUNT,
             outstanding: AMOUNT,
             accrued_interest: 0,
+            interest_remainder: 0,
             opened_at: NOW,
             due_at: NOW + 3 * REPAYMENT_PERIOD,
             last_accrual_at: NOW,
@@ -359,6 +412,7 @@ fn a_later_loan_adds_to_the_debt_and_may_reach_the_limit_exactly() {
     existing.open_loans = 1;
     existing.used_nonces[0] = 1 << 7;
     setup.operator_state = Some(existing);
+    setup.pass_open_loan(&setup.existing_loan(7, AMOUNT));
     setup.pool_state.total_borrowed = AMOUNT;
     setup.vault_balance = DEPOSITS - AMOUNT;
     setup.attestation.nonce = 8;
@@ -387,6 +441,7 @@ fn one_unit_over_the_attested_limit_is_refused() {
     existing.total_debt = AMOUNT;
     existing.open_loans = 1;
     setup.operator_state = Some(existing);
+    setup.pass_open_loan(&setup.existing_loan(6, AMOUNT));
     setup.amount = LIMIT - AMOUNT + 1;
     setup.max_apr_bps = u16::MAX;
     let result = setup.run();
@@ -608,6 +663,7 @@ fn two_attestations_may_be_spent_out_of_order() {
     existing.open_loans = 1;
     existing.used_nonces[0] = 1 << 8;
     setup.operator_state = Some(existing);
+    setup.pass_open_loan(&setup.existing_loan(8, 1));
     setup.max_apr_bps = u16::MAX;
     let result = setup.run();
     assert_eq!(outcome(&result), Ok(()));
@@ -623,6 +679,7 @@ fn a_far_nonce_slides_the_window_and_the_account_keeps_it() {
     existing.open_loans = 1;
     existing.used_nonces[0] = 1 << 7;
     setup.operator_state = Some(existing);
+    setup.pass_open_loan(&setup.existing_loan(7, AMOUNT));
     setup.pool_state.total_borrowed = AMOUNT;
     setup.vault_balance = DEPOSITS - AMOUNT;
     setup.attestation.nonce = 300;
@@ -680,4 +737,168 @@ fn an_existing_loan_at_the_address_is_a_second_lock_behind_the_mask() {
     let result = setup.run();
     // AccountAlreadyInUse, raised by the System Program under our CPI.
     assert_eq!(outcome(&result), Err((BORROW, InstructionError::Custom(0))));
+}
+
+// One open loan of AMOUNT, untouched for a year: 10 % of it is owed and not yet booked.
+fn with_a_year_old_open_loan() -> Setup {
+    let mut setup = Setup::first_loan();
+    let mut existing = fresh_operator_account(setup.signer);
+    existing.total_debt = AMOUNT;
+    existing.open_loans = 1;
+    existing.used_nonces[0] = 1 << 7;
+    setup.operator_state = Some(existing);
+    let mut loan = setup.existing_loan(7, AMOUNT);
+    loan.last_accrual_at = NOW - SECONDS_PER_YEAR;
+    setup.pass_open_loan(&loan);
+    setup.pool_state.total_borrowed = AMOUNT;
+    setup.vault_balance = DEPOSITS - AMOUNT;
+    setup.attestation.nonce = 8;
+    setup.nonce = 8;
+    setup.max_apr_bps = u16::MAX;
+    setup
+}
+
+const A_YEAR_OF_INTEREST: u64 = AMOUNT / 10;
+
+#[test]
+fn interest_accrued_on_open_loans_counts_against_the_limit() {
+    let mut setup = with_a_year_old_open_loan();
+    setup.amount = LIMIT - AMOUNT - A_YEAR_OF_INTEREST + 1;
+    let result = setup.run();
+    assert_eq!(
+        outcome(&result),
+        refused(RewardFloatError::CreditLimitExceeded)
+    );
+}
+
+#[test]
+fn a_loan_up_to_the_limit_books_the_interest_of_the_open_ones_first() {
+    let mut setup = with_a_year_old_open_loan();
+    setup.amount = LIMIT - AMOUNT - A_YEAR_OF_INTEREST;
+    let result = setup.run();
+    assert_eq!(outcome(&result), Ok(()));
+    println!(
+        "borrow, one open loan: {} CU",
+        result.compute_units_consumed
+    );
+    assert!(result.compute_units_consumed <= 40_000);
+
+    let operator: OperatorAccount = deserialize(&result, &setup.operator_account());
+    assert_eq!((operator.total_debt, operator.open_loans), (LIMIT, 2));
+    let open: Loan = deserialize(&result, &setup.open_loans[0].0);
+    assert_eq!(open.accrued_interest, A_YEAR_OF_INTEREST);
+    assert_eq!(open.last_accrual_at, NOW);
+    let pool: Pool = deserialize(&result, &setup.pool);
+    assert_eq!(pool.accrued_interest, A_YEAR_OF_INTEREST);
+    assert_eq!(pool.total_borrowed, LIMIT - A_YEAR_OF_INTEREST);
+}
+
+#[test]
+fn every_open_loan_has_to_be_passed() {
+    let mut setup = with_a_year_old_open_loan();
+    setup.open_loans.clear();
+    let result = setup.run();
+    assert_eq!(
+        outcome(&result),
+        refused(RewardFloatError::OpenLoansMismatch)
+    );
+}
+
+#[test]
+fn only_the_operator_s_own_open_loans_in_this_pool_stand_in() {
+    let variants: [fn(&mut Loan); 3] = [
+        |loan| loan.operator = Pubkey::new_unique(),
+        |loan| loan.pool = Pubkey::new_unique(),
+        |loan| {
+            loan.status = LoanStatus::Repaid;
+            loan.outstanding = 0;
+        },
+    ];
+    for change in variants {
+        let mut setup = with_a_year_old_open_loan();
+        setup.open_loans.clear();
+        let mut loan = setup.existing_loan(7, AMOUNT);
+        change(&mut loan);
+        setup.pass_open_loan(&loan);
+        let result = setup.run();
+        assert_eq!(
+            outcome(&result),
+            refused(RewardFloatError::OpenLoansMismatch)
+        );
+    }
+}
+
+#[test]
+fn the_same_loan_cannot_be_passed_twice() {
+    let mut setup = with_a_year_old_open_loan();
+    let mut existing = setup.operator_state.clone().unwrap();
+    existing.open_loans = 2;
+    setup.operator_state = Some(existing);
+    let twice = setup.open_loans[0].clone();
+    setup.open_loans.push(twice);
+    let result = setup.run();
+    assert_eq!(
+        outcome(&result),
+        refused(RewardFloatError::OpenLoansMismatch)
+    );
+}
+
+#[test]
+fn an_open_loan_passed_read_only_is_refused() {
+    let mut setup = with_a_year_old_open_loan();
+    setup.open_loans[0].2 = false;
+    let result = setup.run();
+    assert_eq!(
+        outcome(&result),
+        refused(RewardFloatError::OpenLoansMismatch)
+    );
+}
+
+#[test]
+fn an_account_that_only_looks_like_a_loan_is_refused() {
+    let mut setup = with_a_year_old_open_loan();
+    setup.open_loans[0].1.owner = solana_pubkey::Pubkey::new_unique();
+    let result = setup.run();
+    assert_eq!(
+        outcome(&result),
+        refused(RewardFloatError::OpenLoansMismatch)
+    );
+}
+
+#[test]
+fn an_operator_at_the_maximum_of_open_loans_cannot_borrow() {
+    let mut setup = Setup::first_loan();
+    let mut existing = fresh_operator_account(setup.signer);
+    existing.open_loans = MAX_OPEN_LOANS;
+    setup.operator_state = Some(existing);
+    let result = setup.run();
+    assert_eq!(
+        outcome(&result),
+        refused(RewardFloatError::TooManyOpenLoans)
+    );
+}
+
+#[test]
+fn the_last_loan_under_the_maximum_stays_within_budget() {
+    let mut setup = Setup::first_loan();
+    let mut existing = fresh_operator_account(setup.signer);
+    existing.total_debt = 3;
+    existing.open_loans = MAX_OPEN_LOANS - 1;
+    existing.used_nonces[0] = 0b1110;
+    setup.operator_state = Some(existing);
+    for nonce in 1..=3 {
+        let mut loan = setup.existing_loan(nonce, 1);
+        loan.last_accrual_at = NOW - SECONDS_PER_YEAR;
+        setup.pass_open_loan(&loan);
+    }
+    setup.max_apr_bps = u16::MAX;
+    let result = setup.run();
+    assert_eq!(outcome(&result), Ok(()));
+    println!(
+        "borrow, three open loans: {} CU",
+        result.compute_units_consumed
+    );
+    assert!(result.compute_units_consumed <= 40_000);
+    let operator: OperatorAccount = deserialize(&result, &setup.operator_account());
+    assert_eq!(operator.open_loans, MAX_OPEN_LOANS);
 }

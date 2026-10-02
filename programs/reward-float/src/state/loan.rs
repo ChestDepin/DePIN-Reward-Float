@@ -19,6 +19,12 @@ pub const REPAYMENT_PERIOD: i64 = 30 * 24 * 60 * 60;
 /// to predict future ones.
 pub const MAX_TERM_PERIODS: u8 = 6;
 
+/// The year an annual rate is quoted over.
+pub const SECONDS_PER_YEAR: i64 = 365 * 24 * 60 * 60;
+
+// Interest for `dt` seconds is `outstanding · apr_bps · dt / ACCRUAL_DENOMINATOR`.
+const ACCRUAL_DENOMINATOR: u128 = 10_000 * SECONDS_PER_YEAR as u128;
+
 #[derive(AnchorSerialize, AnchorDeserialize, InitSpace, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LoanStatus {
     Active,
@@ -43,8 +49,12 @@ pub struct Loan {
     pub principal: u64,
     // Principal not yet repaid.
     pub outstanding: u64,
-    // Interest accrued and not yet repaid. T039 is what moves it.
+    // Interest accrued and not yet repaid.
     pub accrued_interest: u64,
+    // Fraction of a base unit of interest accrued but not yet booked, as a numerator over
+    // ACCRUAL_DENOMINATOR. Carrying it makes the total independent of how often accrual
+    // runs, and anyone can make it run by repaying a single unit.
+    pub interest_remainder: u64,
     pub opened_at: i64,
     pub due_at: i64,
     // When interest was last brought up to date. Accrual is a function of the gap
@@ -84,6 +94,34 @@ impl Loan {
     /// Whether this loan still counts towards the operator's debt.
     pub fn is_open(&self) -> bool {
         !matches!(self.status, LoanStatus::Repaid)
+    }
+
+    /// Brings interest up to `now` at the rate fixed at issue (FR-009) and returns what
+    /// was added, for the operator's and the pool's books to follow.
+    ///
+    /// Simple interest on the principal still outstanding. It keeps running past the end
+    /// of the term and while overdue, at the same rate: FR-009 fixes the rate until the
+    /// loan is closed, and FR-021 rules out any other consequence of being late.
+    pub fn accrue(&mut self, now: i64) -> Result<u64> {
+        if now <= self.last_accrual_at {
+            return Ok(0);
+        }
+        let elapsed = (now - self.last_accrual_at) as u128;
+        let numerator = u128::from(self.outstanding)
+            .checked_mul(u128::from(self.apr_bps))
+            .and_then(|per_second| per_second.checked_mul(elapsed))
+            .and_then(|accrued| accrued.checked_add(u128::from(self.interest_remainder)))
+            .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
+        let interest = u64::try_from(numerator / ACCRUAL_DENOMINATOR)
+            .map_err(|_| error!(RewardFloatError::MathOverflow))?;
+        self.accrued_interest = self
+            .accrued_interest
+            .checked_add(interest)
+            .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
+        // Below ACCRUAL_DENOMINATOR, which is about 3 · 10^11 and fits u64 easily.
+        self.interest_remainder = (numerator % ACCRUAL_DENOMINATOR) as u64;
+        self.last_accrual_at = now;
+        Ok(interest)
     }
 
     /// Takes a repayment of at most `max_amount` (FR-011) and says how it was split.
@@ -145,6 +183,7 @@ mod tests {
             principal: 1_000_000,
             outstanding: 1_000_000,
             accrued_interest: 0,
+            interest_remainder: 0,
             opened_at: 1_700_000_000,
             due_at: 1_700_000_000 + 30 * 86_400,
             last_accrual_at: 1_700_000_000,
@@ -323,11 +362,104 @@ mod tests {
         assert_eq!(code(err), code(error!(RewardFloatError::MathOverflow)));
     }
 
+    const T0: i64 = 1_700_000_000;
+
+    fn accruing(outstanding: u64, apr_bps: u16) -> Loan {
+        let mut loan = owing(outstanding, 0);
+        loan.apr_bps = apr_bps;
+        loan.last_accrual_at = T0;
+        loan
+    }
+
+    #[test]
+    fn a_year_accrues_the_annual_rate_on_what_is_outstanding() {
+        let mut loan = accruing(1_000_000_000, 1_000);
+        assert_eq!(loan.accrue(T0 + SECONDS_PER_YEAR).unwrap(), 100_000_000);
+        assert_eq!(loan.accrued_interest, 100_000_000);
+        assert_eq!(loan.interest_remainder, 0);
+        assert_eq!(loan.last_accrual_at, T0 + SECONDS_PER_YEAR);
+    }
+
+    #[test]
+    fn a_fraction_of_a_unit_is_carried_rather_than_lost() {
+        // 100 USDC at 10 % is about 0.317 base units a second.
+        let mut loan = accruing(100_000_000, 1_000);
+        assert_eq!(loan.accrue(T0 + 1).unwrap(), 0);
+        assert_eq!(loan.interest_remainder, 100_000_000 * 1_000);
+        assert_eq!(loan.accrue(T0 + 3).unwrap(), 0);
+        assert_eq!(loan.accrue(T0 + 4).unwrap(), 1);
+        assert_eq!(
+            loan.interest_remainder,
+            4 * 100_000_000 * 1_000 - 10_000 * SECONDS_PER_YEAR as u64
+        );
+    }
+
+    #[test]
+    fn how_often_accrual_runs_does_not_change_what_accrues() {
+        let mut every_second = accruing(100_000_000, 1_000);
+        let mut once = accruing(100_000_000, 1_000);
+        let day = 86_400;
+        for second in 1..=day {
+            every_second.accrue(T0 + second).unwrap();
+        }
+        once.accrue(T0 + day).unwrap();
+        assert_eq!(every_second.accrued_interest, once.accrued_interest);
+        assert_eq!(every_second.interest_remainder, once.interest_remainder);
+        assert_eq!(once.accrued_interest, 27_397);
+    }
+
+    #[test]
+    fn interest_follows_the_principal_after_a_partial_repayment() {
+        let mut loan = accruing(1_000_000_000, 1_000);
+        loan.accrue(T0 + SECONDS_PER_YEAR / 2).unwrap();
+        loan.apply_repayment(550_000_000).unwrap();
+        assert_eq!((loan.outstanding, loan.accrued_interest), (500_000_000, 0));
+        assert_eq!(loan.accrue(T0 + SECONDS_PER_YEAR).unwrap(), 25_000_000);
+    }
+
+    #[test]
+    fn interest_keeps_running_past_the_term_and_while_overdue() {
+        let mut loan = accruing(1_000_000_000, 1_000);
+        loan.due_at = T0 + REPAYMENT_PERIOD;
+        loan.status = LoanStatus::Overdue;
+        assert_eq!(loan.accrue(T0 + SECONDS_PER_YEAR).unwrap(), 100_000_000);
+    }
+
+    #[test]
+    fn nothing_accrues_on_nothing_outstanding() {
+        let mut loan = accruing(0, 1_000);
+        loan.status = LoanStatus::Repaid;
+        assert_eq!(loan.accrue(T0 + SECONDS_PER_YEAR).unwrap(), 0);
+        assert_eq!(loan.accrued_interest, 0);
+    }
+
+    #[test]
+    fn a_clock_behind_the_last_accrual_accrues_nothing_and_moves_nothing() {
+        let mut loan = accruing(1_000_000_000, 1_000);
+        assert_eq!(loan.accrue(T0 - 60).unwrap(), 0);
+        assert_eq!(loan.last_accrual_at, T0);
+        assert_eq!(loan.interest_remainder, 0);
+    }
+
+    #[test]
+    fn accrual_fails_loud_instead_of_wrapping() {
+        let mut loan = accruing(u64::MAX, u16::MAX);
+        let err = loan.accrue(i64::MAX).unwrap_err();
+        assert_eq!(code(err), code(error!(RewardFloatError::MathOverflow)));
+
+        let mut loan = accruing(1, 1);
+        loan.accrued_interest = u64::MAX;
+        let err = loan
+            .accrue(T0 + 10 * SECONDS_PER_YEAR * 10_000)
+            .unwrap_err();
+        assert_eq!(code(err), code(error!(RewardFloatError::MathOverflow)));
+    }
+
     #[test]
     fn the_layout_is_the_one_we_declared() {
         // operator 32 + pool 32 + reward_mint 32 + nonce 8 + principal 8
-        // + outstanding 8 + accrued_interest 8 + opened_at 8 + due_at 8
-        // + last_accrual_at 8 + apr_bps 2 + sweep_bps 2 + status 1 + bump 1
-        assert_eq!(Loan::INIT_SPACE, 158);
+        // + outstanding 8 + accrued_interest 8 + interest_remainder 8 + opened_at 8
+        // + due_at 8 + last_accrual_at 8 + apr_bps 2 + sweep_bps 2 + status 1 + bump 1
+        assert_eq!(Loan::INIT_SPACE, 166);
     }
 }

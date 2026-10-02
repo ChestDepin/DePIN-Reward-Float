@@ -20,6 +20,13 @@ pub const OPERATOR_SEED: &[u8] = b"operator";
 /// out is safe anyway — the operator asks for a fresh attestation and retries.
 pub const NONCE_WINDOW: u64 = 256;
 
+/// Most loans one operator may have open at once.
+///
+/// A new loan has to bring the interest of every open one up to date before the limit
+/// is checked (FR-012), so each open loan is an account in the borrow transaction. Four
+/// keep that transaction well inside its size and compute budget.
+pub const MAX_OPEN_LOANS: u32 = 4;
+
 /// The window as 64-bit words, which is how it is stored.
 pub const NONCE_WINDOW_WORDS: usize = (NONCE_WINDOW / 64) as usize;
 

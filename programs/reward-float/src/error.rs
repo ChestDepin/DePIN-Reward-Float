@@ -52,4 +52,8 @@ pub enum RewardFloatError {
     AttestationNonceMismatch,
     #[msg("the loan is already repaid")]
     LoanNotOpen,
+    #[msg("every open loan of the operator in this pool has to be passed, writable and once")]
+    OpenLoansMismatch,
+    #[msg("the operator already has the maximum number of open loans")]
+    TooManyOpenLoans,
 }

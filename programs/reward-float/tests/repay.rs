@@ -9,7 +9,7 @@ use mollusk_svm::result::InstructionResult;
 use reward_float::error::RewardFloatError;
 use reward_float::{
     Loan, LoanStatus, OperatorAccount, Pool, LOAN_SEED, OPERATOR_SEED, POOL_SEED, REPAYMENT_PERIOD,
-    VAULT_SEED,
+    SECONDS_PER_YEAR, VAULT_SEED,
 };
 use solana_account::Account;
 use solana_instruction::error::InstructionError;
@@ -118,6 +118,7 @@ impl Setup {
                 principal: PRINCIPAL,
                 outstanding: OUTSTANDING,
                 accrued_interest: INTEREST,
+                interest_remainder: 0,
                 opened_at: NOW - 40 * 86_400,
                 due_at: NOW - 40 * 86_400 + 3 * REPAYMENT_PERIOD,
                 last_accrual_at: NOW,
@@ -389,4 +390,48 @@ fn the_debt_comes_off_the_loan_operator_s_account_only() {
         result.raw_result,
         refused_by_anchor(anchor_lang::error::ErrorCode::ConstraintSeeds)
     );
+}
+
+// A year since the loan was last touched: 10 % of what is outstanding is owed on top.
+const A_YEAR_OF_INTEREST: u64 = OUTSTANDING / 10;
+
+#[test]
+fn interest_accrued_since_the_loan_was_last_touched_is_settled_first() {
+    let mut setup = Setup::open_loan();
+    setup.loan_state.last_accrual_at = NOW - SECONDS_PER_YEAR;
+    setup.max_amount = 10_000_000;
+    let result = setup.run();
+    assert_eq!(result.raw_result, Ok(()));
+
+    let interest = INTEREST + A_YEAR_OF_INTEREST;
+    let loan: Loan = deserialize(&result, &setup.loan);
+    assert_eq!(loan.accrued_interest, 0);
+    assert_eq!(loan.outstanding, OUTSTANDING - (10_000_000 - interest));
+    assert_eq!(loan.last_accrual_at, NOW);
+
+    let operator: OperatorAccount = deserialize(&result, &setup.operator_account);
+    assert_eq!(operator.total_debt, OWED + A_YEAR_OF_INTEREST - 10_000_000);
+
+    let pool: Pool = deserialize(&result, &setup.pool);
+    assert_eq!(pool.accrued_interest, 0);
+    assert_eq!(pool.total_borrowed, loan.outstanding);
+    assert_eq!(pool.total_deposits, DEPOSITS + interest);
+}
+
+#[test]
+fn repaying_in_full_includes_interest_up_to_this_second() {
+    let mut setup = Setup::open_loan();
+    setup.loan_state.last_accrual_at = NOW - SECONDS_PER_YEAR;
+    setup.max_amount = WALLET;
+    let result = setup.run();
+    assert_eq!(result.raw_result, Ok(()));
+
+    let owed = OWED + A_YEAR_OF_INTEREST;
+    assert_eq!(token_balance(&result, &setup.source), WALLET - owed);
+    let loan: Loan = deserialize(&result, &setup.loan);
+    assert_eq!(loan.status, LoanStatus::Repaid);
+    let operator: OperatorAccount = deserialize(&result, &setup.operator_account);
+    assert_eq!((operator.total_debt, operator.open_loans), (0, 0));
+    let pool: Pool = deserialize(&result, &setup.pool);
+    assert_eq!((pool.total_borrowed, pool.accrued_interest), (0, 0));
 }

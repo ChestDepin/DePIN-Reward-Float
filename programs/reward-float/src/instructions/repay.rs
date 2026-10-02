@@ -36,14 +36,17 @@ pub struct Repay<'info> {
 }
 
 pub fn handle_repay(ctx: Context<Repay>, max_amount: u64) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
     let loan = &mut ctx.accounts.loan;
+    let accrued = loan.accrue(now)?;
     let repayment = loan.apply_repayment(max_amount)?;
     let paid = repayment.total();
 
     let account = &mut ctx.accounts.operator_account;
     account.total_debt = account
         .total_debt
-        .checked_sub(paid)
+        .checked_add(accrued)
+        .and_then(|debt| debt.checked_sub(paid))
         .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
     if loan.status == LoanStatus::Repaid {
         account.open_loans = account
@@ -59,7 +62,8 @@ pub fn handle_repay(ctx: Context<Repay>, max_amount: u64) -> Result<()> {
         .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
     pool.accrued_interest = pool
         .accrued_interest
-        .checked_sub(repayment.interest)
+        .checked_add(accrued)
+        .and_then(|receivable| receivable.checked_sub(repayment.interest))
         .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
     // Paid-in interest is the lenders' income: it becomes cash the pool can lend again.
     pool.total_deposits = pool

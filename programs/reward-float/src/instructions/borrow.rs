@@ -6,8 +6,8 @@ use solana_sdk_ids::sysvar::instructions::ID as INSTRUCTIONS_ID;
 use crate::error::RewardFloatError;
 use crate::instructions::verify_attestation::verify_limit_attestation;
 use crate::state::{
-    Loan, LoanStatus, OperatorAccount, Pool, LOAN_SEED, MAX_TERM_PERIODS, OPERATOR_SEED, POOL_SEED,
-    REPAYMENT_PERIOD,
+    Loan, LoanStatus, OperatorAccount, Pool, LOAN_SEED, MAX_OPEN_LOANS, MAX_TERM_PERIODS,
+    OPERATOR_SEED, POOL_SEED, REPAYMENT_PERIOD,
 };
 
 const BASIS_POINTS: u16 = 10_000;
@@ -92,6 +92,7 @@ pub fn handle_borrow(
         RewardFloatError::AttestationNonceMismatch
     );
 
+    let pool_key = ctx.accounts.pool.key();
     let account = &mut ctx.accounts.operator_account;
     if account.owner == Pubkey::default() {
         account.owner = operator;
@@ -99,9 +100,21 @@ pub fn handle_borrow(
     }
     account.consume_nonce(nonce)?;
     require!(!account.overdue, RewardFloatError::OperatorOverdue);
+    require!(
+        account.open_loans < MAX_OPEN_LOANS,
+        RewardFloatError::TooManyOpenLoans
+    );
+    let accrued = accrue_open_loans(
+        ctx.remaining_accounts,
+        &operator,
+        &pool_key,
+        account.open_loans,
+        now,
+    )?;
     account.total_debt = account
         .total_debt
-        .checked_add(amount)
+        .checked_add(accrued)
+        .and_then(|debt| debt.checked_add(amount))
         .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
     require!(
         account.total_debt <= attestation.limit,
@@ -113,6 +126,10 @@ pub fn handle_borrow(
         .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
 
     let pool = &mut ctx.accounts.pool;
+    pool.accrued_interest = pool
+        .accrued_interest
+        .checked_add(accrued)
+        .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
     require!(
         amount <= pool.free_liquidity()?,
         RewardFloatError::InsufficientLiquidity
@@ -148,6 +165,7 @@ pub fn handle_borrow(
         principal: amount,
         outstanding: amount,
         accrued_interest: 0,
+        interest_remainder: 0,
         opened_at: now,
         due_at,
         last_accrual_at: now,
@@ -172,6 +190,45 @@ pub fn handle_borrow(
         ),
         amount,
     )
+}
+
+// FR-012 bounds the debt across every open loan, interest included, so each one is
+// brought up to this second before the limit is checked. `open_loans` is what makes
+// "every" checkable: as many distinct open loans of this operator as it counts.
+// Loans of another pool are refused rather than skipped, since their interest belongs
+// on that pool's books, which this transaction does not hold.
+fn accrue_open_loans(
+    loans: &[AccountInfo],
+    operator: &Pubkey,
+    pool: &Pubkey,
+    open_loans: u32,
+    now: i64,
+) -> Result<u64> {
+    require!(
+        loans.len() == open_loans as usize,
+        RewardFloatError::OpenLoansMismatch
+    );
+    let mut accrued: u64 = 0;
+    for (index, info) in loans.iter().enumerate() {
+        require!(
+            info.is_writable
+                && *info.owner == crate::ID
+                && !loans[..index].iter().any(|seen| seen.key == info.key),
+            RewardFloatError::OpenLoansMismatch
+        );
+        let mut data = info.try_borrow_mut_data()?;
+        let mut loan = Loan::try_deserialize(&mut &data[..])
+            .map_err(|_| error!(RewardFloatError::OpenLoansMismatch))?;
+        require!(
+            loan.operator == *operator && loan.pool == *pool && loan.is_open(),
+            RewardFloatError::OpenLoansMismatch
+        );
+        accrued = accrued
+            .checked_add(loan.accrue(now)?)
+            .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
+        loan.try_serialize(&mut &mut data[..])?;
+    }
+    Ok(accrued)
 }
 
 // What Anchor's `init` does, moved behind the nonce check. The address is known in
