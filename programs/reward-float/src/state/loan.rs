@@ -85,6 +85,43 @@ impl Loan {
     pub fn is_open(&self) -> bool {
         !matches!(self.status, LoanStatus::Repaid)
     }
+
+    /// Takes a repayment of at most `max_amount` (FR-011) and says how it was split.
+    ///
+    /// `max_amount` is a ceiling, not a demand: once interest accrues by the second, the
+    /// exact debt at the moment the transaction lands cannot be known when it is signed,
+    /// so the excess is simply not taken rather than refused. Interest is settled before
+    /// principal, so the pool's receivable turns into cash first.
+    pub fn apply_repayment(&mut self, max_amount: u64) -> Result<Repayment> {
+        require!(self.is_open(), RewardFloatError::LoanNotOpen);
+        require!(max_amount > 0, RewardFloatError::InvalidAmount);
+        let paid = max_amount.min(self.total_owed()?);
+        let interest = paid.min(self.accrued_interest);
+        let principal = paid - interest;
+        self.accrued_interest -= interest;
+        self.outstanding -= principal;
+        if self.outstanding == 0 && self.accrued_interest == 0 {
+            self.status = LoanStatus::Repaid;
+        }
+        Ok(Repayment {
+            interest,
+            principal,
+        })
+    }
+}
+
+/// How one repayment was split between interest and principal.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Repayment {
+    pub interest: u64,
+    pub principal: u64,
+}
+
+impl Repayment {
+    pub fn total(&self) -> u64 {
+        // Both halves were taken out of one `total_owed`, which did not overflow.
+        self.interest + self.principal
+    }
 }
 
 #[cfg(test)]
@@ -190,6 +227,100 @@ mod tests {
         loan.due_at = loan.opened_at + REPAYMENT_PERIOD;
         assert_eq!(loan.principal_due_by(loan.due_at - 1), 0);
         assert_eq!(loan.principal_due_by(loan.due_at), u64::MAX);
+    }
+
+    fn owing(outstanding: u64, accrued_interest: u64) -> Loan {
+        let mut loan = loan();
+        loan.outstanding = outstanding;
+        loan.accrued_interest = accrued_interest;
+        loan
+    }
+
+    #[test]
+    fn a_repayment_settles_interest_before_principal() {
+        let mut loan = owing(600_000, 20_000);
+        let paid = loan.apply_repayment(100_000).unwrap();
+        assert_eq!(
+            paid,
+            Repayment {
+                interest: 20_000,
+                principal: 80_000
+            }
+        );
+        assert_eq!(loan.accrued_interest, 0);
+        assert_eq!(loan.outstanding, 520_000);
+        assert_eq!(loan.status, LoanStatus::Active);
+    }
+
+    #[test]
+    fn a_repayment_smaller_than_the_interest_leaves_the_principal_alone() {
+        let mut loan = owing(600_000, 20_000);
+        let paid = loan.apply_repayment(5_000).unwrap();
+        assert_eq!(
+            paid,
+            Repayment {
+                interest: 5_000,
+                principal: 0
+            }
+        );
+        assert_eq!(loan.accrued_interest, 15_000);
+        assert_eq!(loan.outstanding, 600_000);
+    }
+
+    #[test]
+    fn exactly_the_debt_repays_the_loan() {
+        let mut loan = owing(600_000, 20_000);
+        let paid = loan.apply_repayment(620_000).unwrap();
+        assert_eq!(paid.total(), 620_000);
+        assert_eq!((loan.outstanding, loan.accrued_interest), (0, 0));
+        assert_eq!(loan.status, LoanStatus::Repaid);
+    }
+
+    #[test]
+    fn more_than_the_debt_takes_only_the_debt() {
+        let mut loan = owing(600_000, 20_000);
+        let paid = loan.apply_repayment(u64::MAX).unwrap();
+        assert_eq!(
+            paid,
+            Repayment {
+                interest: 20_000,
+                principal: 600_000
+            }
+        );
+        assert_eq!(loan.status, LoanStatus::Repaid);
+    }
+
+    #[test]
+    fn an_overdue_loan_can_still_be_repaid() {
+        let mut loan = owing(600_000, 0);
+        loan.status = LoanStatus::Overdue;
+        assert_eq!(loan.apply_repayment(1).unwrap().principal, 1);
+        assert_eq!(loan.status, LoanStatus::Overdue);
+        loan.apply_repayment(u64::MAX).unwrap();
+        assert_eq!(loan.status, LoanStatus::Repaid);
+    }
+
+    #[test]
+    fn a_repayment_of_nothing_is_refused() {
+        let mut loan = owing(600_000, 20_000);
+        let err = loan.apply_repayment(0).unwrap_err();
+        assert_eq!(code(err), code(error!(RewardFloatError::InvalidAmount)));
+        assert_eq!((loan.outstanding, loan.accrued_interest), (600_000, 20_000));
+    }
+
+    #[test]
+    fn a_repaid_loan_takes_no_more_money() {
+        let mut loan = owing(0, 0);
+        loan.status = LoanStatus::Repaid;
+        let err = loan.apply_repayment(1).unwrap_err();
+        assert_eq!(code(err), code(error!(RewardFloatError::LoanNotOpen)));
+    }
+
+    #[test]
+    fn what_is_owed_overflowing_fails_loud_on_repayment_too() {
+        let mut loan = owing(u64::MAX, 1);
+        let err = loan.apply_repayment(1).unwrap_err();
+        assert_eq!(code(err), code(error!(RewardFloatError::MathOverflow)));
     }
 
     #[test]

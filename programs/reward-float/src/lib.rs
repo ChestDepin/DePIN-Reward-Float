@@ -41,4 +41,8 @@ pub mod reward_float {
     ) -> Result<()> {
         handle_borrow(ctx, nonce, amount, term_periods, sweep_bps, max_apr_bps)
     }
+
+    pub fn repay(ctx: Context<Repay>, max_amount: u64) -> Result<()> {
+        handle_repay(ctx, max_amount)
+    }
 }

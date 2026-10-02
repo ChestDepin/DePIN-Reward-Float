@@ -34,7 +34,7 @@ pub enum RewardFloatError {
     AttestationStale,
     #[msg("the base rate plus the utilisation premium must fit in u16 basis points")]
     InvalidRateCurve,
-    #[msg("the loan amount must be greater than zero")]
+    #[msg("the amount must be greater than zero")]
     InvalidAmount,
     #[msg("the loan term must be between one and the maximum number of periods")]
     InvalidTerm,
@@ -50,4 +50,6 @@ pub enum RewardFloatError {
     RateAboveMaximum,
     #[msg("the loan nonce is not the nonce of the limit attestation")]
     AttestationNonceMismatch,
+    #[msg("the loan is already repaid")]
+    LoanNotOpen,
 }
