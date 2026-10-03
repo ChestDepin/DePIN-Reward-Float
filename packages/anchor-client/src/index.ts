@@ -1,3 +1,13 @@
-// Типізований клієнт програми reward-float, згенерований з IDL після збірки.
-// Наповнюється у Фазі 4 — склад і порядок у docs/TASKS.md.
-export {}
+import { Program } from '@coral-xyz/anchor'
+import type { Connection } from '@solana/web3.js'
+import { type RewardFloat, rewardFloatIdl } from './idl/reward-float.ts'
+
+export * from './accounts.ts'
+export * from './borrow.ts'
+export type { RewardFloat } from './idl/reward-float.ts'
+export * from './pda.ts'
+export * from './repay.ts'
+
+export function rewardFloatProgram(connection: Connection): Program<RewardFloat> {
+  return new Program(rewardFloatIdl, { connection })
+}

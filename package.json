@@ -13,7 +13,9 @@
     "lint": "biome lint .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "gate": "pnpm lint && pnpm typecheck && pnpm test",
+    "gate": "pnpm idl:check && pnpm lint && pnpm typecheck && pnpm test",
+    "idl:sync": "node scripts/sync-idl.mjs",
+    "idl:check": "node scripts/sync-idl.mjs --check",
     "bench:limit": "pnpm --filter @drf/tests bench:limit"
   },
   "devDependencies": {

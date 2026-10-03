@@ -1,0 +1,773 @@
+{
+  "address": "RewardFLoat11111111111111111111111111111111",
+  "metadata": {
+    "name": "reward_float",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Micro-loans to DePIN operators against future token rewards"
+  },
+  "instructions": [
+    {
+      "name": "borrow",
+      "discriminator": [
+        228,
+        253,
+        131,
+        202,
+        207,
+        116,
+        89,
+        18
+      ],
+      "accounts": [
+        {
+          "name": "operator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "operator_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  112,
+                  101,
+                  114,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "operator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "loan",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  111,
+                  97,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "operator"
+              },
+              {
+                "kind": "arg",
+                "path": "nonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "destination",
+          "writable": true
+        },
+        {
+          "name": "reward_mint"
+        },
+        {
+          "name": "instructions",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "nonce",
+          "type": "u64"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "term_periods",
+          "type": "u8"
+        },
+        {
+          "name": "sweep_bps",
+          "type": "u16"
+        },
+        {
+          "name": "max_apr_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "initialize_pool",
+      "discriminator": [
+        95,
+        180,
+        10,
+        172,
+        84,
+        174,
+        232,
+        40
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "Becomes the pool authority, the key that may later replace the attestor."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "stable_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "stable_mint",
+          "docs": [
+            "The stablecoin loans are issued and repaid in."
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "program_data",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  80,
+                  214,
+                  237,
+                  14,
+                  252,
+                  255,
+                  194,
+                  142,
+                  134,
+                  153,
+                  108,
+                  57,
+                  38,
+                  9,
+                  55,
+                  196,
+                  68,
+                  78,
+                  133,
+                  40,
+                  47,
+                  103,
+                  93,
+                  98,
+                  100,
+                  99,
+                  189,
+                  0,
+                  0,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                2,
+                168,
+                246,
+                145,
+                78,
+                136,
+                161,
+                176,
+                226,
+                16,
+                21,
+                62,
+                247,
+                99,
+                174,
+                43,
+                0,
+                194,
+                185,
+                61,
+                22,
+                193,
+                36,
+                210,
+                192,
+                83,
+                122,
+                16,
+                4,
+                128,
+                0,
+                0
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "attestor",
+          "type": "pubkey"
+        },
+        {
+          "name": "base_apr_bps",
+          "type": "u16"
+        },
+        {
+          "name": "slope_apr_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "repay",
+      "discriminator": [
+        234,
+        103,
+        67,
+        82,
+        208,
+        234,
+        219,
+        166
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "signer": true
+        },
+        {
+          "name": "pool",
+          "writable": true,
+          "relations": [
+            "loan"
+          ]
+        },
+        {
+          "name": "loan",
+          "writable": true
+        },
+        {
+          "name": "operator_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  112,
+                  101,
+                  114,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "loan.operator",
+                "account": "Loan"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "source",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "max_amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_attestor",
+      "discriminator": [
+        95,
+        11,
+        236,
+        157,
+        234,
+        146,
+        163,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "pool",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "attestor",
+          "type": "pubkey"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Loan",
+      "discriminator": [
+        20,
+        195,
+        70,
+        117,
+        165,
+        227,
+        182,
+        1
+      ]
+    },
+    {
+      "name": "OperatorAccount",
+      "discriminator": [
+        65,
+        8,
+        134,
+        32,
+        87,
+        254,
+        91,
+        212
+      ]
+    },
+    {
+      "name": "Pool",
+      "discriminator": [
+        241,
+        154,
+        109,
+        4,
+        17,
+        177,
+        109,
+        188
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "MathOverflow",
+      "msg": "arithmetic overflow"
+    },
+    {
+      "code": 6001,
+      "name": "AttestationNonceTooOld",
+      "msg": "attestation nonce is older than the replay window and can no longer be checked"
+    },
+    {
+      "code": 6002,
+      "name": "AttestationNonceAlreadyUsed",
+      "msg": "attestation nonce was already used"
+    },
+    {
+      "code": 6003,
+      "name": "NotUpgradeAuthority",
+      "msg": "only the upgrade authority of this program can create a pool"
+    },
+    {
+      "code": 6004,
+      "name": "NotPoolAuthority",
+      "msg": "only the pool authority can replace the attestor"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidAttestor",
+      "msg": "the attestor key cannot be the all-zero key"
+    },
+    {
+      "code": 6006,
+      "name": "AttestationMissing",
+      "msg": "the instruction right before this one must be the ed25519 check of a limit attestation"
+    },
+    {
+      "code": 6007,
+      "name": "AttestationMalformed",
+      "msg": "the limit attestation or its ed25519 check is not laid out as expected"
+    },
+    {
+      "code": 6008,
+      "name": "AttestationWrongSigner",
+      "msg": "the limit attestation is not signed by the pool attestor"
+    },
+    {
+      "code": 6009,
+      "name": "AttestationWrongOperator",
+      "msg": "the limit attestation was issued for another operator"
+    },
+    {
+      "code": 6010,
+      "name": "AttestationExpired",
+      "msg": "the limit attestation has expired"
+    },
+    {
+      "code": 6011,
+      "name": "AttestationValidityTooLong",
+      "msg": "the limit attestation claims to stay valid for longer than the program allows"
+    },
+    {
+      "code": 6012,
+      "name": "AttestationStale",
+      "msg": "the limit attestation was computed from data older than a day"
+    },
+    {
+      "code": 6013,
+      "name": "InvalidRateCurve",
+      "msg": "the base rate plus the utilisation premium must fit in u16 basis points"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidAmount",
+      "msg": "the amount must be greater than zero"
+    },
+    {
+      "code": 6015,
+      "name": "InvalidTerm",
+      "msg": "the loan term must be between one and the maximum number of periods"
+    },
+    {
+      "code": 6016,
+      "name": "InvalidSweepShare",
+      "msg": "the share of rewards withheld must be between 1 and 10000 basis points"
+    },
+    {
+      "code": 6017,
+      "name": "OperatorOverdue",
+      "msg": "an operator with an overdue loan cannot borrow"
+    },
+    {
+      "code": 6018,
+      "name": "CreditLimitExceeded",
+      "msg": "the loan would take the operator's debt over the attested credit limit"
+    },
+    {
+      "code": 6019,
+      "name": "InsufficientLiquidity",
+      "msg": "the pool does not have enough free liquidity for this loan"
+    },
+    {
+      "code": 6020,
+      "name": "RateAboveMaximum",
+      "msg": "the rate for this loan is above the maximum the operator agreed to"
+    },
+    {
+      "code": 6021,
+      "name": "AttestationNonceMismatch",
+      "msg": "the loan nonce is not the nonce of the limit attestation"
+    },
+    {
+      "code": 6022,
+      "name": "LoanNotOpen",
+      "msg": "the loan is already repaid"
+    },
+    {
+      "code": 6023,
+      "name": "OpenLoansMismatch",
+      "msg": "every open loan of the operator in this pool has to be passed, writable and once"
+    },
+    {
+      "code": 6024,
+      "name": "TooManyOpenLoans",
+      "msg": "the operator already has the maximum number of open loans"
+    }
+  ],
+  "types": [
+    {
+      "name": "Loan",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "nonce",
+            "type": "u64"
+          },
+          {
+            "name": "principal",
+            "type": "u64"
+          },
+          {
+            "name": "outstanding",
+            "type": "u64"
+          },
+          {
+            "name": "accrued_interest",
+            "type": "u64"
+          },
+          {
+            "name": "interest_remainder",
+            "type": "u64"
+          },
+          {
+            "name": "opened_at",
+            "type": "i64"
+          },
+          {
+            "name": "due_at",
+            "type": "i64"
+          },
+          {
+            "name": "last_accrual_at",
+            "type": "i64"
+          },
+          {
+            "name": "apr_bps",
+            "type": "u16"
+          },
+          {
+            "name": "sweep_bps",
+            "type": "u16"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "LoanStatus"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LoanStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Active"
+          },
+          {
+            "name": "Overdue"
+          },
+          {
+            "name": "Repaid"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OperatorAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_debt",
+            "type": "u64"
+          },
+          {
+            "name": "open_loans",
+            "type": "u32"
+          },
+          {
+            "name": "overdue",
+            "type": "bool"
+          },
+          {
+            "name": "nonce_floor",
+            "type": "u64"
+          },
+          {
+            "name": "used_nonces",
+            "type": {
+              "array": [
+                "u64",
+                4
+              ]
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Pool",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "attestor",
+            "type": "pubkey"
+          },
+          {
+            "name": "stable_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_shares",
+            "type": "u64"
+          },
+          {
+            "name": "total_deposits",
+            "type": "u64"
+          },
+          {
+            "name": "total_borrowed",
+            "type": "u64"
+          },
+          {
+            "name": "accrued_interest",
+            "type": "u64"
+          },
+          {
+            "name": "overdue_principal",
+            "type": "u64"
+          },
+          {
+            "name": "base_apr_bps",
+            "type": "u16"
+          },
+          {
+            "name": "slope_apr_bps",
+            "type": "u16"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}
