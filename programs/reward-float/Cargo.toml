@@ -48,3 +48,7 @@ mollusk-svm-programs-token = { version = "0.15.0", default-features = false, fea
 solana-account = "4.3"
 solana-instruction = "3.4"
 solana-pubkey = "4.2"
+# Random operation sequences for the FR-012 invariants (SC-006, SC-007), shrunk to the
+# shortest one that still breaks them. Without default features it pulls no fork or
+# timeout machinery, and the lock gains three new crates and moves no pinned one.
+proptest = { version = "1", default-features = false, features = ["std"] }
