@@ -1,6 +1,8 @@
 import {
   type CreditLimit,
   creditLimitSchema,
+  type IssuedAttestation,
+  issuedAttestationSchema,
   type PayoutHistory,
   payoutHistorySchema,
 } from '@drf/shared/api'
@@ -63,6 +65,7 @@ export type ApiClient = {
   payoutHistory(address: SolanaAddress): Promise<ApiResult<PayoutHistory>>
   creditLimit(address: SolanaAddress): Promise<ApiResult<CreditLimit>>
   refreshCreditLimit(address: SolanaAddress): Promise<ApiResult<CreditLimit>>
+  issueLimitAttestation(address: SolanaAddress): Promise<ApiResult<IssuedAttestation>>
 }
 
 export type ApiClientOptions = {
@@ -70,7 +73,10 @@ export type ApiClientOptions = {
   fetch?: typeof globalThis.fetch
 }
 
-export function createApiClient({ baseUrl, fetch = globalThis.fetch }: ApiClientOptions): ApiClient {
+export function createApiClient({
+  baseUrl,
+  fetch = globalThis.fetch,
+}: ApiClientOptions): ApiClient {
   const call = async <T>(
     schema: z.ZodType<T>,
     path: string,
@@ -99,6 +105,8 @@ export function createApiClient({ baseUrl, fetch = globalThis.fetch }: ApiClient
     creditLimit: (address) => call(creditLimitSchema, `/v1/operators/${address}/limit`, 'GET'),
     refreshCreditLimit: (address) =>
       call(creditLimitSchema, `/v1/operators/${address}/limit/refresh`, 'POST'),
+    issueLimitAttestation: (address) =>
+      call(issuedAttestationSchema, `/v1/operators/${address}/attestations/limit`, 'POST'),
   }
 }
 

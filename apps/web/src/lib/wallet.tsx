@@ -1,8 +1,9 @@
 import { type SolanaAddress, solanaAddressSchema } from '@drf/shared/schemas'
 import type { Adapter } from '@solana/wallet-adapter-base'
-import { useWallet, WalletProvider } from '@solana/wallet-adapter-react'
+import { ConnectionProvider, useWallet, WalletProvider } from '@solana/wallet-adapter-react'
 import type { ReactNode } from 'react'
 import { useParams } from 'react-router-dom'
+import { chainConfig } from './chain'
 
 export type WalletSnapshot = {
   wallets: readonly string[]
@@ -39,15 +40,18 @@ export function deriveIdentity({ wallets, connecting, address }: WalletSnapshot)
 const NO_PRESET_ADAPTERS: Adapter[] = []
 
 export function OperatorIdentityProvider({ children }: { children: ReactNode }) {
-  // ConnectionProvider свідомо відсутній: браузер до RPC не ходить взагалі —
-  // ланцюг читає indexer, а сторінка бачить його результат через api (FR-024b).
+  // History and limits still come from the api, which reads mainnet (FR-024b). This
+  // connection is devnet and serves borrowing alone: the page reads the pool and the
+  // operator's loans from the chain the program runs on, and sends the loan there.
   //
-  // autoConnect зберігає лише ім'я обраного гаманця. Це не сесія і не обліковий
-  // запис: жодного токена, і рішення підключитись щоразу лишається за гаманцем.
+  // autoConnect keeps only the name of the chosen wallet. It is not a session or an
+  // account: there is no token, and the decision to connect stays with the wallet.
   return (
-    <WalletProvider wallets={NO_PRESET_ADAPTERS} autoConnect>
-      {children}
-    </WalletProvider>
+    <ConnectionProvider endpoint={chainConfig.rpcUrl}>
+      <WalletProvider wallets={NO_PRESET_ADAPTERS} autoConnect>
+        {children}
+      </WalletProvider>
+    </ConnectionProvider>
   )
 }
 

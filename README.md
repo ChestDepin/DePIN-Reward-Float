@@ -32,7 +32,6 @@ What is deliberately not here yet:
 - **no lending.** The limit is a number nobody underwrites at drawdown, because there is
   no drawdown. The on-chain program (`programs/reward-float`) declares its id and nothing
   else — pool, loans and reward withholding land in a later milestone.
-- **`/offer` is a mock.** The page says so on screen.
 - **the indexer has no runnable entry point, and the keeper has no code.** The indexer's
   logic is written and tested; `apps/worker/src/indexer/index.ts` re-exports it and does
   not run it, and nothing in `apps/worker` reads a single environment variable. The
@@ -187,7 +186,7 @@ fresh deployment would start out screaming.
 | `/lookup` | enter or connect a wallet |
 | `/history/:address` | monthly payouts per network |
 | `/limit/:address` | the limit, its factors, or the refusal |
-| `/offer` | mock — labelled as such on the page |
+| `/borrow` | the full cost of a loan before signing it; the loan itself is made on devnet |
 
 The address lives in the path because payout history is public; a connected wallet is just
 one address among them.

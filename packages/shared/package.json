@@ -9,6 +9,7 @@
     "./scoring": "./src/scoring/index.ts",
     "./attestation": "./src/attestation/index.ts",
     "./schemas": "./src/schemas/index.ts",
+    "./loan": "./src/loan/index.ts",
     "./log": "./src/log.ts"
   },
   "scripts": {

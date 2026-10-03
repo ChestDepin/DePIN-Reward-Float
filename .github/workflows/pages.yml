@@ -44,6 +44,11 @@ jobs:
           pnpm --filter @drf/web exec vite build --base "/${{ github.event.repository.name }}/"
         env:
           VITE_API_URL: ${{ vars.VITE_API_URL }}
+          # Borrowing reads devnet. Left unset, the borrow page says lending is not
+          # set up rather than failing; the page reads "" as unset.
+          VITE_DEVNET_RPC_URL: ${{ vars.VITE_DEVNET_RPC_URL }}
+          VITE_STABLE_MINT: ${{ vars.VITE_STABLE_MINT }}
+          VITE_REWARD_MINTS: ${{ vars.VITE_REWARD_MINTS }}
 
       # Pages answers any unknown path with 404.html. A copy of the app shell
       # there turns a direct link to /limit/<address> into a client-side route.

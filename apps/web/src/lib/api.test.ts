@@ -128,6 +128,31 @@ describe('createApiClient', () => {
     expect(methods).toEqual(['POST'])
   })
 
+  it('asks for a limit attestation with a POST to the wallet it is issued to', async () => {
+    const attestation = {
+      wallet: WALLET,
+      nonce: '7',
+      limitBaseUnits: '555000000',
+      attestor: WALLET,
+      message: '3yZe7d',
+      signature: '5Hx2',
+      computedAt: '2026-08-31T12:00:00.000Z',
+      expiresAt: '2026-08-31T12:05:00.000Z',
+    }
+    const calls: [string, string | undefined][] = []
+    const client = clientOver(async (input, init) => {
+      calls.push([String(input), init?.method])
+      return answered(200, attestation)
+    })
+
+    const result = await client.issueLimitAttestation(WALLET)
+
+    expect(calls).toEqual([
+      [`https://api.example.com/v1/operators/${WALLET}/attestations/limit`, 'POST'],
+    ])
+    expect(result).toEqual({ ok: true, value: attestation })
+  })
+
   // Сервера може не бути взагалі — це стан оператора, а не наш виняток, і
   // сторінка мусить сказати про нього, а не впасти.
   it('reports an api it could not reach instead of throwing', async () => {

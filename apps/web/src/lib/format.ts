@@ -38,3 +38,33 @@ export function formatTokens(baseUnits: string, decimals: number): string {
 
   return shown === '' ? group(whole) : `${group(whole)}.${shown}`
 }
+
+const CENT = 10_000n
+
+// A cost is rounded up, the other way from a limit: the cost shown is what the operator
+// agrees to pay, and a cent short of it is a cent they were not told about.
+export function formatCost(baseUnits: bigint): string {
+  return formatCents((baseUnits + CENT - 1n) / CENT)
+}
+
+export function formatCents(cents: bigint): string {
+  return `$${group((cents / 100n).toString())}.${(cents % 100n).toString().padStart(2, '0')}`
+}
+
+// Rows of a table whose total is shown too. Rounding each row up on its own would make
+// the rows add up to more than the total; here they add up to the total rounded up, and
+// the extra cents go to the rows that lost the most to truncation.
+export function roundRowsToCents(rows: readonly bigint[]): bigint[] {
+  const cents = rows.map((row) => row / CENT)
+  const total = rows.reduce((sum, row) => sum + row, 0n)
+  let extra = (total + CENT - 1n) / CENT - cents.reduce((sum, cent) => sum + cent, 0n)
+  const byRemainder = rows
+    .map((row, index) => ({ index, remainder: row % CENT }))
+    .sort((a, b) => (b.remainder > a.remainder ? 1 : b.remainder < a.remainder ? -1 : 0))
+  for (const { index } of byRemainder) {
+    if (extra === 0n) break
+    cents[index] = (cents[index] ?? 0n) + 1n
+    extra -= 1n
+  }
+  return cents
+}

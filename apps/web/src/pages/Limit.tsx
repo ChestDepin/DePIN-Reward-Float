@@ -169,7 +169,7 @@ const Limit = () => {
           <div className="mt-10 flex flex-wrap items-center gap-x-6 gap-y-3">
             {borrowable && (
               <Link
-                to="/offer"
+                to="/borrow"
                 className="inline-block border border-rule px-4 py-2 text-[12px] sm:text-[13px] text-ink hover:border-ink"
               >
                 CONTINUE →
