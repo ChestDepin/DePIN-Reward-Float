@@ -7,14 +7,18 @@
     "build": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "bench:limit": "vitest run --config vitest.bench.config.ts"
+    "bench:limit": "vitest run --config vitest.bench.config.ts limit-latency first-screen-latency",
+    "bench:borrow": "vitest run --config vitest.bench.config.ts borrow-latency"
   },
   "dependencies": {
     "@drf/anchor-client": "workspace:^",
     "@drf/api": "workspace:^",
     "@drf/db": "workspace:^",
     "@drf/shared": "workspace:^",
-    "drizzle-orm": "^0.44.7"
+    "@scure/base": "^2.4.0",
+    "@solana/web3.js": "^1.98.4",
+    "drizzle-orm": "^0.44.7",
+    "zod": "^4.5.2"
   },
   "devDependencies": {
     "@drf/web": "workspace:^",

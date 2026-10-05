@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import {
   decodeMint,
   initializeMintInstruction,
-  mintToInstruction,
   parseAmount,
   parseSeedConfig,
   type SeedState,
@@ -165,17 +164,5 @@ describe('token instructions', () => {
     ])
     // InitializeMint2: tag 20, decimals, mint authority, no freeze authority.
     expect([...ix.data]).toEqual([20, 6, ...wallet.toBytes(), 0])
-  })
-
-  it('mints to an account, amount little-endian', () => {
-    const destination = key(5)
-    const ix = mintToInstruction({ mint, destination, authority: wallet, amount: 258n })
-
-    expect(ix.keys.map((k) => [k.pubkey.toBase58(), k.isSigner, k.isWritable])).toEqual([
-      [mint.toBase58(), false, true],
-      [destination.toBase58(), false, true],
-      [wallet.toBase58(), true, false],
-    ])
-    expect([...ix.data]).toEqual([7, 2, 1, 0, 0, 0, 0, 0, 0])
   })
 })

@@ -23,14 +23,17 @@ import { z } from 'zod'
 import { fetchPool } from '../src/accounts.ts'
 import { depositInstruction } from '../src/deposit.ts'
 import { rewardFloatProgram } from '../src/index.ts'
-import { poolAddress, rewardFloatProgramId, u64Bytes, vaultAddress } from '../src/pda.ts'
-import { createAssociatedTokenAccountIdempotent, fetchStableBalance } from '../src/token.ts'
+import { poolAddress, rewardFloatProgramId, vaultAddress } from '../src/pda.ts'
+import {
+  createAssociatedTokenAccountIdempotent,
+  fetchStableBalance,
+  mintToInstruction,
+} from '../src/token.ts'
 
 const TOKEN_PROGRAM_ID = utils.token.TOKEN_PROGRAM_ID
 const BPF_LOADER_UPGRADEABLE = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111')
 const MINT_SIZE = 82
 const INITIALIZE_MINT_2 = 20
-const MINT_TO = 7
 // What USDC has, so amounts read the same on devnet as they would on mainnet.
 const STABLE_DECIMALS = 6
 
@@ -146,8 +149,8 @@ export function seedPlan(input: {
   return steps
 }
 
-// Two instructions of the token program, written out like the associated-account one in
-// src/token.ts rather than pulling in @solana/spl-token for a devnet script.
+// Written out like the token instructions in src/token.ts rather than pulling in
+// @solana/spl-token for a devnet script.
 export function initializeMintInstruction(input: {
   mint: PublicKey
   decimals: number
@@ -163,23 +166,6 @@ export function initializeMintInstruction(input: {
       ...input.authority.toBytes(),
       noFreezeAuthority,
     ]),
-  })
-}
-
-export function mintToInstruction(input: {
-  mint: PublicKey
-  destination: PublicKey
-  authority: PublicKey
-  amount: bigint
-}): TransactionInstruction {
-  return new TransactionInstruction({
-    programId: TOKEN_PROGRAM_ID,
-    keys: [
-      { pubkey: input.mint, isSigner: false, isWritable: true },
-      { pubkey: input.destination, isSigner: false, isWritable: true },
-      { pubkey: input.authority, isSigner: true, isWritable: false },
-    ],
-    data: Buffer.concat([Buffer.from([MINT_TO]), u64Bytes(input.amount)]),
   })
 }
 

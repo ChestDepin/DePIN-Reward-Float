@@ -1,8 +1,10 @@
 import { utils } from '@coral-xyz/anchor'
 import { type PublicKey, SystemProgram, TransactionInstruction } from '@solana/web3.js'
 import type { ChainReader } from './accounts.ts'
+import { u64Bytes } from './pda.ts'
 
 const CREATE_IDEMPOTENT = 1
+const MINT_TO = 7
 
 // One instruction of the associated token program, written out rather than taken from
 // @solana/spl-token, which the rest of the client has no use for.
@@ -26,6 +28,29 @@ export function createAssociatedTokenAccountIdempotent(input: {
       { pubkey: utils.token.TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     ],
     data: Buffer.from([CREATE_IDEMPOTENT]),
+  })
+}
+
+export function associatedTokenAddress(mint: PublicKey, owner: PublicKey): PublicKey {
+  return utils.token.associatedAddress({ mint, owner })
+}
+
+// The test stablecoin on devnet is ours to mint: seeding the pool and measuring a borrow
+// both top up a wallet with it.
+export function mintToInstruction(input: {
+  mint: PublicKey
+  destination: PublicKey
+  authority: PublicKey
+  amount: bigint
+}): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: utils.token.TOKEN_PROGRAM_ID,
+    keys: [
+      { pubkey: input.mint, isSigner: false, isWritable: true },
+      { pubkey: input.destination, isSigner: false, isWritable: true },
+      { pubkey: input.authority, isSigner: true, isWritable: false },
+    ],
+    data: Buffer.concat([Buffer.from([MINT_TO]), u64Bytes(input.amount)]),
   })
 }
 
