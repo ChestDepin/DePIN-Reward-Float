@@ -1,7 +1,7 @@
-// SC-006 and SC-007 over random sequences of borrows, repayments and time passing, run
-// as real transactions against the built program. An independent model of the books
-// predicts the outcome of every borrow and repayment, and after every step the on-chain
-// state has to agree with it to the base unit.
+// SC-006 and SC-007 over random sequences of borrows, repayments, deposits and time
+// passing, run as real transactions against the built program. An independent model of
+// the books predicts the outcome of every step, and after every step the on-chain state
+// has to agree with it to the base unit.
 mod common;
 
 use std::collections::HashMap;
@@ -21,8 +21,8 @@ use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use reward_float::error::RewardFloatError;
 use reward_float::instructions::verify_attestation::LIMIT_ATTESTATION_TAG;
 use reward_float::{
-    Loan, OperatorAccount, Pool, LOAN_SEED, MAX_OPEN_LOANS, MAX_TERM_PERIODS, OPERATOR_SEED,
-    POOL_SEED, SECONDS_PER_YEAR, VAULT_SEED,
+    LenderShare, Loan, OperatorAccount, Pool, LOAN_SEED, MAX_OPEN_LOANS, MAX_TERM_PERIODS,
+    OPERATOR_SEED, POOL_SEED, SECONDS_PER_YEAR, SHARE_SEED, VAULT_SEED,
 };
 use solana_account::Account;
 use solana_instruction::error::InstructionError;
@@ -32,6 +32,7 @@ use solana_sdk_ids::{ed25519_program, sysvar};
 const SEQUENCES: u32 = 1_000;
 const START: i64 = 1_790_157_600;
 const OPERATORS: usize = 2;
+const LENDERS: usize = 2;
 const MAX_DEPOSITS: u64 = 1_000_000_000;
 const LIMIT_SPAN: u64 = 400_000_000;
 const BASE_APR_BPS: u16 = 800;
@@ -90,6 +91,10 @@ enum Op {
         loan: usize,
         pay: Pay,
     },
+    Deposit {
+        lender: usize,
+        amount: u64,
+    },
 }
 
 fn op() -> impl Strategy<Value = Op> {
@@ -136,7 +141,9 @@ fn op() -> impl Strategy<Value = Op> {
         loan,
         pay,
     });
-    prop_oneof![4 => borrow, 3 => repay, 2 => wait]
+    let amount = prop_oneof![Just(1u64), 1..=MAX_DEPOSITS];
+    let deposit = (0..LENDERS, amount).prop_map(|(lender, amount)| Op::Deposit { lender, amount });
+    prop_oneof![4 => borrow, 3 => repay, 2 => wait, 1 => deposit]
 }
 
 fn share(of: u64, permille: u16) -> u64 {
@@ -157,6 +164,9 @@ struct Coverage {
     repaid_interest: AtomicU32,
     repaid_in_full: AtomicU32,
     outgrown_by_interest: AtomicU32,
+    deposited: AtomicU32,
+    deposited_above_par: AtomicU32,
+    refused_a_deposit_under_a_share: AtomicU32,
 }
 
 static COVERAGE: Coverage = Coverage {
@@ -171,6 +181,9 @@ static COVERAGE: Coverage = Coverage {
     repaid_interest: AtomicU32::new(0),
     repaid_in_full: AtomicU32::new(0),
     outgrown_by_interest: AtomicU32::new(0),
+    deposited: AtomicU32::new(0),
+    deposited_above_par: AtomicU32::new(0),
+    refused_a_deposit_under_a_share: AtomicU32::new(0),
 };
 
 fn hit(counter: &AtomicU32) {
@@ -205,6 +218,13 @@ struct Operator {
     last_limit: Option<u64>,
 }
 
+struct Lender {
+    key: Pubkey,
+    source: Pubkey,
+    share: Pubkey,
+    shares: u64,
+}
+
 struct World {
     context: MolluskContext<HashMap<solana_pubkey::Pubkey, Account>>,
     now: i64,
@@ -215,7 +235,9 @@ struct World {
     payer: Pubkey,
     source: Pubkey,
     operators: Vec<Operator>,
+    lenders: Vec<Lender>,
     deposits: u64,
+    shares: u64,
     borrowed: u64,
     loans: Vec<ModelLoan>,
 }
@@ -271,6 +293,9 @@ impl World {
             total_deposits: deposits,
             total_borrowed: 0,
             accrued_interest: 0,
+            accrual_rate: 0,
+            accrual_rate_time: 0,
+            accrual_remainders: 0,
             overdue_principal: 0,
             base_apr_bps: BASE_APR_BPS,
             slope_apr_bps: SLOPE_APR_BPS,
@@ -305,6 +330,25 @@ impl World {
             })
             .collect();
 
+        let lenders = (0..LENDERS)
+            .map(|_| {
+                let key = Pubkey::new_unique();
+                let source = Pubkey::new_unique();
+                store.insert(m(&key), wallet());
+                store.insert(m(&source), token_account(&stable_mint, &key, u64::MAX / 4));
+                Lender {
+                    key,
+                    source,
+                    share: Pubkey::find_program_address(
+                        &[SHARE_SEED, pool.as_ref(), key.as_ref()],
+                        &reward_float::ID,
+                    )
+                    .0,
+                    shares: 0,
+                }
+            })
+            .collect();
+
         Self {
             context: mollusk().with_context(store),
             now: START,
@@ -315,7 +359,9 @@ impl World {
             payer,
             source,
             operators,
+            lenders,
             deposits,
+            shares: deposits,
             borrowed: 0,
             loans: Vec::new(),
         }
@@ -373,6 +419,7 @@ impl World {
                 loan,
                 pay,
             } => self.repay(operator, loan, pay)?,
+            Op::Deposit { lender, amount } => self.deposit(lender, amount)?,
         }
         self.check_books()
     }
@@ -581,6 +628,49 @@ impl World {
         Ok(())
     }
 
+    // What the pool is worth if every open loan were brought up to this second.
+    fn value(&self) -> u128 {
+        let interest: u128 = self
+            .loans
+            .iter()
+            .filter(|loan| loan.open)
+            .map(|loan| loan.interest)
+            .sum();
+        u128::from(self.deposits) + interest / DENOMINATOR
+    }
+
+    fn deposit(&mut self, lender: usize, amount: u64) -> Result<(), TestCaseError> {
+        let value = self.value();
+        let shares = (u128::from(amount) * u128::from(self.shares) / value) as u64;
+        let expected = if shares == 0 {
+            refused(0, RewardFloatError::DepositTooSmall)
+        } else {
+            Ok(())
+        };
+
+        let instruction = self.deposit_instruction(lender, amount);
+        let actual = self.run(&[instruction]);
+        prop_assert_eq!(&actual, &expected);
+        if expected.is_err() {
+            hit(&COVERAGE.refused_a_deposit_under_a_share);
+            return Ok(());
+        }
+
+        // FR-018: whoever was in before does not lose a unit of value per share to it.
+        prop_assert!(
+            (value + u128::from(amount)) * u128::from(self.shares)
+                >= value * u128::from(self.shares + shares)
+        );
+        self.deposits += amount;
+        self.shares += shares;
+        self.lenders[lender].shares += shares;
+        hit(&COVERAGE.deposited);
+        if shares < amount {
+            hit(&COVERAGE.deposited_above_par);
+        }
+        Ok(())
+    }
+
     // Every book the limit check and the liquidity check read, against the model. The
     // limit is checked against `OperatorAccount.total_debt`, so a book that drifts from
     // the loans would make the check compare against the wrong number.
@@ -597,6 +687,8 @@ impl World {
         let mut booked_debt = [0u64; OPERATORS];
         let mut open_loans = [0u32; OPERATORS];
         let mut booked_interest = 0u64;
+        let mut rate = 0u128;
+        let mut earned = 0u128;
         for loan in &self.loans {
             let state: Loan = self.read(&loan.address);
             prop_assert_eq!(state.outstanding, loan.principal);
@@ -613,9 +705,30 @@ impl World {
                 booked_debt[loan.operator] += state.outstanding + state.accrued_interest;
                 open_loans[loan.operator] += 1;
                 booked_interest += state.accrued_interest;
+                rate += u128::from(loan.principal) * u128::from(loan.apr_bps);
+                earned += loan.interest;
             }
         }
         prop_assert_eq!(pool.accrued_interest, booked_interest);
+        // The accrual sums say how much was earned and not booked, exactly as the loans do.
+        prop_assert_eq!(pool.accrual_rate, rate);
+        prop_assert_eq!(
+            pool.accrual_rate * u128::try_from(self.now).unwrap() + pool.accrual_remainders
+                - pool.accrual_rate_time,
+            earned - u128::from(pool.accrued_interest) * DENOMINATOR
+        );
+
+        prop_assert_eq!(pool.total_shares, self.shares);
+        for lender in &self.lenders {
+            match self.stored(&lender.share) {
+                None => prop_assert_eq!(lender.shares, 0),
+                Some(_) => {
+                    let state: LenderShare = self.read(&lender.share);
+                    prop_assert_eq!(state.shares, lender.shares);
+                    prop_assert_eq!(state.owner, lender.key);
+                }
+            }
+        }
 
         for (index, operator) in self.operators.iter().enumerate() {
             if self.stored(&operator.account).is_none() {
@@ -719,6 +832,26 @@ impl World {
         }
     }
 
+    fn deposit_instruction(&self, lender: usize, amount: u64) -> Instruction {
+        let who = &self.lenders[lender];
+        Instruction {
+            program_id: m(&reward_float::ID),
+            accounts: metas(
+                reward_float::accounts::Deposit {
+                    lender: who.key,
+                    pool: self.pool,
+                    lender_share: who.share,
+                    vault: self.vault,
+                    source: who.source,
+                    token_program: spl_token::ID,
+                    system_program: anchor_lang::system_program::ID,
+                }
+                .to_account_metas(None),
+            ),
+            data: reward_float::instruction::Deposit { amount }.data(),
+        }
+    }
+
     fn repay_instruction(&self, loan: &Pubkey, max_amount: u64) -> Instruction {
         let operator = self.read::<Loan>(loan).operator;
         Instruction {
@@ -753,7 +886,7 @@ fn run_sequence(deposits: u64, ops: &[Op]) -> Result<(), TestCaseError> {
 }
 
 #[test]
-fn no_sequence_lends_past_the_limit_or_past_the_free_liquidity() {
+fn no_sequence_lends_past_the_limit_or_past_the_free_liquidity_or_dilutes_a_share() {
     let mut runner = TestRunner::new(Config {
         cases: SEQUENCES,
         failure_persistence: None,
@@ -779,6 +912,12 @@ fn no_sequence_lends_past_the_limit_or_past_the_free_liquidity() {
         ("repaid interest", &COVERAGE.repaid_interest),
         ("repaid in full", &COVERAGE.repaid_in_full),
         ("outgrown by interest", &COVERAGE.outgrown_by_interest),
+        ("deposited", &COVERAGE.deposited),
+        ("deposited above par", &COVERAGE.deposited_above_par),
+        (
+            "refused a deposit under a share",
+            &COVERAGE.refused_a_deposit_under_a_share,
+        ),
     ];
     for (name, counter) in witnessed {
         let count = counter.load(Ordering::Relaxed);

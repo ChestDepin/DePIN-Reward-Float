@@ -92,7 +92,7 @@ pub fn handle_borrow(
         RewardFloatError::AttestationNonceMismatch
     );
 
-    let pool_key = ctx.accounts.pool.key();
+    let pool = &mut ctx.accounts.pool;
     let account = &mut ctx.accounts.operator_account;
     if account.owner == Pubkey::default() {
         account.owner = operator;
@@ -107,7 +107,7 @@ pub fn handle_borrow(
     let accrued = accrue_open_loans(
         ctx.remaining_accounts,
         &operator,
-        &pool_key,
+        pool,
         account.open_loans,
         now,
     )?;
@@ -125,7 +125,6 @@ pub fn handle_borrow(
         .checked_add(1)
         .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
 
-    let pool = &mut ctx.accounts.pool;
     pool.accrued_interest = pool
         .accrued_interest
         .checked_add(accrued)
@@ -174,6 +173,7 @@ pub fn handle_borrow(
         status: LoanStatus::Active,
         bump: loan_bump,
     };
+    pool.track(&loan)?;
     loan.try_serialize(&mut &mut ctx.accounts.loan.try_borrow_mut_data()?[..])?;
 
     let stable_mint = pool.stable_mint;
@@ -200,10 +200,11 @@ pub fn handle_borrow(
 fn accrue_open_loans(
     loans: &[AccountInfo],
     operator: &Pubkey,
-    pool: &Pubkey,
+    pool: &mut Account<Pool>,
     open_loans: u32,
     now: i64,
 ) -> Result<u64> {
+    let pool_key = pool.key();
     require!(
         loans.len() == open_loans as usize,
         RewardFloatError::OpenLoansMismatch
@@ -220,12 +221,14 @@ fn accrue_open_loans(
         let mut loan = Loan::try_deserialize(&mut &data[..])
             .map_err(|_| error!(RewardFloatError::OpenLoansMismatch))?;
         require!(
-            loan.operator == *operator && loan.pool == *pool && loan.is_open(),
+            loan.operator == *operator && loan.pool == pool_key && loan.is_open(),
             RewardFloatError::OpenLoansMismatch
         );
+        pool.untrack(&loan)?;
         accrued = accrued
             .checked_add(loan.accrue(now)?)
             .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
+        pool.track(&loan)?;
         loan.try_serialize(&mut &mut data[..])?;
     }
     Ok(accrued)

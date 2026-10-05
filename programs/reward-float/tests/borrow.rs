@@ -4,7 +4,7 @@ use anchor_lang::prelude::Pubkey;
 use anchor_lang::solana_program::program_pack::Pack;
 use anchor_lang::{AccountDeserialize, AccountSerialize, InstructionData, ToAccountMetas};
 use anchor_spl::token::spl_token;
-use common::{m, metas, mint_account, mollusk, token_account, wallet, LAMPORTS_PER_SOL};
+use common::{m, metas, mint_account, mollusk, token_account, track, wallet, LAMPORTS_PER_SOL};
 use ed25519_dalek::{Signer, SigningKey};
 use mollusk_svm::result::types::{TransactionProgramResult, TransactionResult};
 use reward_float::error::RewardFloatError;
@@ -195,6 +195,9 @@ impl Setup {
                 total_deposits: DEPOSITS,
                 total_borrowed: 0,
                 accrued_interest: 0,
+                accrual_rate: 0,
+                accrual_rate_time: 0,
+                accrual_remainders: 0,
                 overdue_principal: 0,
                 base_apr_bps: 800,
                 slope_apr_bps: 2_000,
@@ -266,7 +269,11 @@ impl Setup {
         }
     }
 
+    // A loan of this pool is on its accrual sums too, as `borrow` left it there.
     fn pass_open_loan(&mut self, loan: &Loan) {
+        if loan.pool == self.pool && loan.is_open() {
+            track(&mut self.pool_state, loan);
+        }
         let address = self.loan_at(loan.nonce).0;
         self.open_loans
             .push((address, program_account(serialize(loan)), true));
@@ -398,6 +405,7 @@ fn the_first_loan_opens_the_operator_account_and_fixes_the_terms() {
     let pool: Pool = deserialize(&result, &setup.pool);
     let mut expected = setup.pool_state.clone();
     expected.total_borrowed = AMOUNT;
+    track(&mut expected, &loan);
     assert_eq!(serialize(&pool), serialize(&expected));
 
     assert_eq!(token_balance(&result, &setup.vault), DEPOSITS - AMOUNT);
@@ -791,6 +799,26 @@ fn a_loan_up_to_the_limit_books_the_interest_of_the_open_ones_first() {
     let pool: Pool = deserialize(&result, &setup.pool);
     assert_eq!(pool.accrued_interest, A_YEAR_OF_INTEREST);
     assert_eq!(pool.total_borrowed, LIMIT - A_YEAR_OF_INTEREST);
+
+    // The open loan moved on to NOW and the new one joined, both on the accrual sums.
+    let mut expected = setup.pool_state.clone();
+    expected.accrual_rate = 0;
+    expected.accrual_rate_time = 0;
+    expected.accrual_remainders = 0;
+    track(&mut expected, &open);
+    track(&mut expected, &deserialize::<Loan>(&result, &setup.loan()));
+    assert_eq!(
+        (
+            pool.accrual_rate,
+            pool.accrual_rate_time,
+            pool.accrual_remainders
+        ),
+        (
+            expected.accrual_rate,
+            expected.accrual_rate_time,
+            expected.accrual_remainders
+        )
+    );
 }
 
 #[test]

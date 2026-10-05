@@ -32,6 +32,10 @@ export function operatorAccountAddress(operator: PublicKey): PublicKey {
   return derive([seed('operator'), operator.toBuffer()])
 }
 
+export function lenderShareAddress(pool: PublicKey, owner: PublicKey): PublicKey {
+  return derive([seed('share'), pool.toBuffer(), owner.toBuffer()])
+}
+
 export function loanAddress(operator: PublicKey, nonce: bigint): PublicKey {
   return derive([seed('loan'), operator.toBuffer(), u64Bytes(nonce)])
 }

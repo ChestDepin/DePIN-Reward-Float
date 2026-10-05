@@ -23,7 +23,7 @@ pub const MAX_TERM_PERIODS: u8 = 6;
 pub const SECONDS_PER_YEAR: i64 = 365 * 24 * 60 * 60;
 
 // Interest for `dt` seconds is `outstanding · apr_bps · dt / ACCRUAL_DENOMINATOR`.
-const ACCRUAL_DENOMINATOR: u128 = 10_000 * SECONDS_PER_YEAR as u128;
+pub(crate) const ACCRUAL_DENOMINATOR: u128 = 10_000 * SECONDS_PER_YEAR as u128;
 
 #[derive(AnchorSerialize, AnchorDeserialize, InitSpace, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LoanStatus {
@@ -124,6 +124,22 @@ impl Loan {
         Ok(interest)
     }
 
+    /// This loan's part of the pool's accrual sums (FR-018): its rate, its rate times the
+    /// moment its interest was last booked, and its unbooked fraction. Only the first two
+    /// move with time, and only on accrual, which is why the pool can carry them as sums.
+    pub fn accrual_terms(&self) -> Result<AccrualTerms> {
+        let rate = u128::from(self.outstanding) * u128::from(self.apr_bps);
+        let rate_time = u128::try_from(self.last_accrual_at)
+            .ok()
+            .and_then(|at| rate.checked_mul(at))
+            .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
+        Ok(AccrualTerms {
+            rate,
+            rate_time,
+            remainder: u128::from(self.interest_remainder),
+        })
+    }
+
     /// Takes a repayment of at most `max_amount` (FR-011) and says how it was split.
     ///
     /// `max_amount` is a ceiling, not a demand: once interest accrues by the second, the
@@ -146,6 +162,14 @@ impl Loan {
             principal,
         })
     }
+}
+
+/// One loan's part of [`crate::Pool`]'s accrual sums.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct AccrualTerms {
+    pub rate: u128,
+    pub rate_time: u128,
+    pub remainder: u128,
 }
 
 /// How one repayment was split between interest and principal.

@@ -130,6 +130,81 @@
       ]
     },
     {
+      "name": "deposit",
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "lender",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "lender_share",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  104,
+                  97,
+                  114,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "lender"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "source",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "initialize_pool",
       "discriminator": [
         95,
@@ -416,6 +491,19 @@
   ],
   "accounts": [
     {
+      "name": "LenderShare",
+      "discriminator": [
+        241,
+        123,
+        149,
+        50,
+        141,
+        224,
+        21,
+        42
+      ]
+    },
+    {
       "name": "Loan",
       "discriminator": [
         20,
@@ -580,9 +668,38 @@
       "code": 6024,
       "name": "TooManyOpenLoans",
       "msg": "the operator already has the maximum number of open loans"
+    },
+    {
+      "code": 6025,
+      "name": "DepositTooSmall",
+      "msg": "the deposit is worth less than one share of the pool"
     }
   ],
   "types": [
+    {
+      "name": "LenderShare",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "shares",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
     {
       "name": "Loan",
       "type": {
@@ -749,6 +866,18 @@
           {
             "name": "accrued_interest",
             "type": "u64"
+          },
+          {
+            "name": "accrual_rate",
+            "type": "u128"
+          },
+          {
+            "name": "accrual_rate_time",
+            "type": "u128"
+          },
+          {
+            "name": "accrual_remainders",
+            "type": "u128"
           },
           {
             "name": "overdue_principal",

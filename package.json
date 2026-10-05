@@ -16,7 +16,8 @@
     "gate": "pnpm idl:check && pnpm lint && pnpm typecheck && pnpm test",
     "idl:sync": "node scripts/sync-idl.mjs",
     "idl:check": "node scripts/sync-idl.mjs --check",
-    "bench:limit": "pnpm --filter @drf/tests bench:limit"
+    "bench:limit": "pnpm --filter @drf/tests bench:limit",
+    "seed:pool": "pnpm --filter @drf/anchor-client seed:pool"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.11",

@@ -4,7 +4,7 @@ use anchor_lang::prelude::Pubkey;
 use anchor_lang::solana_program::program_pack::Pack;
 use anchor_lang::{AccountDeserialize, AccountSerialize, InstructionData, ToAccountMetas};
 use anchor_spl::token::spl_token;
-use common::{account, custom, m, metas, mollusk, token_account, wallet, LAMPORTS_PER_SOL};
+use common::{account, custom, m, metas, mollusk, token_account, track, wallet, LAMPORTS_PER_SOL};
 use mollusk_svm::result::InstructionResult;
 use reward_float::error::RewardFloatError;
 use reward_float::{
@@ -103,6 +103,10 @@ impl Setup {
                 total_deposits: DEPOSITS,
                 total_borrowed: OUTSTANDING,
                 accrued_interest: INTEREST,
+                // Filled in from the loan as it stands when the test runs.
+                accrual_rate: 0,
+                accrual_rate_time: 0,
+                accrual_remainders: 0,
                 overdue_principal: 0,
                 base_apr_bps: 800,
                 slope_apr_bps: 2_000,
@@ -169,9 +173,13 @@ impl Setup {
     }
 
     fn run(&self) -> InstructionResult {
+        let mut pool = self.pool_state.clone();
+        if self.loan_state.is_open() {
+            track(&mut pool, &self.loan_state);
+        }
         let accounts = vec![
             (m(&self.payer), wallet()),
-            (m(&self.pool), program_account(serialize(&self.pool_state))),
+            (m(&self.pool), program_account(serialize(&pool))),
             (m(&self.loan), program_account(serialize(&self.loan_state))),
             (
                 m(&self.operator_account),
@@ -221,6 +229,8 @@ fn a_partial_repayment_settles_interest_first_and_moves_every_book() {
     pool.accrued_interest = 0;
     // Interest actually paid in is the pool's income, and it is cash now.
     pool.total_deposits = DEPOSITS + INTEREST;
+    // The loan stays on the accrual sums with what is left of it.
+    track(&mut pool, &loan);
     assert_eq!(
         serialize(&deserialize::<Pool>(&result, &setup.pool)),
         serialize(&pool)
@@ -248,6 +258,15 @@ fn more_than_the_debt_takes_exactly_the_debt_and_repays_the_loan() {
     let pool: Pool = deserialize(&result, &setup.pool);
     assert_eq!((pool.total_borrowed, pool.accrued_interest), (0, 0));
     assert_eq!(pool.total_deposits, DEPOSITS + INTEREST);
+    // A repaid loan earns nothing more, so nothing of it is left on the accrual sums.
+    assert_eq!(
+        (
+            pool.accrual_rate,
+            pool.accrual_rate_time,
+            pool.accrual_remainders
+        ),
+        (0, 0, 0)
+    );
 }
 
 #[test]

@@ -131,6 +131,81 @@ export type RewardFloat = {
       ]
     },
     {
+      "name": "deposit",
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "lender",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "lenderShare",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  104,
+                  97,
+                  114,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "lender"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "source",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "initializePool",
       "discriminator": [
         95,
@@ -417,6 +492,19 @@ export type RewardFloat = {
   ],
   "accounts": [
     {
+      "name": "lenderShare",
+      "discriminator": [
+        241,
+        123,
+        149,
+        50,
+        141,
+        224,
+        21,
+        42
+      ]
+    },
+    {
       "name": "loan",
       "discriminator": [
         20,
@@ -581,9 +669,38 @@ export type RewardFloat = {
       "code": 6024,
       "name": "tooManyOpenLoans",
       "msg": "the operator already has the maximum number of open loans"
+    },
+    {
+      "code": 6025,
+      "name": "depositTooSmall",
+      "msg": "the deposit is worth less than one share of the pool"
     }
   ],
   "types": [
+    {
+      "name": "lenderShare",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "shares",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
     {
       "name": "loan",
       "type": {
@@ -750,6 +867,18 @@ export type RewardFloat = {
           {
             "name": "accruedInterest",
             "type": "u64"
+          },
+          {
+            "name": "accrualRate",
+            "type": "u128"
+          },
+          {
+            "name": "accrualRateTime",
+            "type": "u128"
+          },
+          {
+            "name": "accrualRemainders",
+            "type": "u128"
           },
           {
             "name": "overduePrincipal",
@@ -905,6 +1034,81 @@ export const rewardFloatIdl: RewardFloat = {
       ]
     },
     {
+      "name": "deposit",
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "lender",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "lenderShare",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  104,
+                  97,
+                  114,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "lender"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "source",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "initializePool",
       "discriminator": [
         95,
@@ -1191,6 +1395,19 @@ export const rewardFloatIdl: RewardFloat = {
   ],
   "accounts": [
     {
+      "name": "lenderShare",
+      "discriminator": [
+        241,
+        123,
+        149,
+        50,
+        141,
+        224,
+        21,
+        42
+      ]
+    },
+    {
       "name": "loan",
       "discriminator": [
         20,
@@ -1355,9 +1572,38 @@ export const rewardFloatIdl: RewardFloat = {
       "code": 6024,
       "name": "tooManyOpenLoans",
       "msg": "the operator already has the maximum number of open loans"
+    },
+    {
+      "code": 6025,
+      "name": "depositTooSmall",
+      "msg": "the deposit is worth less than one share of the pool"
     }
   ],
   "types": [
+    {
+      "name": "lenderShare",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "shares",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
     {
       "name": "loan",
       "type": {
@@ -1524,6 +1770,18 @@ export const rewardFloatIdl: RewardFloat = {
           {
             "name": "accruedInterest",
             "type": "u64"
+          },
+          {
+            "name": "accrualRate",
+            "type": "u128"
+          },
+          {
+            "name": "accrualRateTime",
+            "type": "u128"
+          },
+          {
+            "name": "accrualRemainders",
+            "type": "u128"
           },
           {
             "name": "overduePrincipal",

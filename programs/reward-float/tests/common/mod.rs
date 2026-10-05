@@ -10,6 +10,7 @@ use anchor_spl::token::spl_token;
 use mollusk_svm::result::InstructionResult;
 use mollusk_svm::Mollusk;
 use reward_float::error::RewardFloatError;
+use reward_float::{Loan, Pool};
 use solana_account::Account;
 use solana_instruction::error::InstructionError;
 use solana_instruction::AccountMeta;
@@ -108,4 +109,13 @@ pub fn token_account(mint: &Pubkey, owner: &Pubkey, amount: u64) -> Account {
         executable: false,
         rent_epoch: 0,
     }
+}
+
+// Adds an open loan to the pool's accrual sums, worked out here rather than by the
+// program, so that a test setting a pool up does not lean on the code under test.
+pub fn track(pool: &mut Pool, loan: &Loan) {
+    let rate = u128::from(loan.outstanding) * u128::from(loan.apr_bps);
+    pool.accrual_rate += rate;
+    pool.accrual_rate_time += rate * u128::try_from(loan.last_accrual_at).unwrap();
+    pool.accrual_remainders += u128::from(loan.interest_remainder);
 }

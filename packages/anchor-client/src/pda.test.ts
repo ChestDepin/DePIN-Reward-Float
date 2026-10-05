@@ -2,6 +2,7 @@ import { BN } from '@coral-xyz/anchor'
 import { PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 import {
+  lenderShareAddress,
   loanAddress,
   operatorAccountAddress,
   poolAddress,
@@ -48,6 +49,18 @@ describe('program addresses', () => {
       true,
     )
     expect(loanAddress(operator, nonce).equals(resolved.loan as PublicKey)).toBe(true)
+  })
+
+  it('derives a lender share as deposit does, one per pool and lender', async () => {
+    const pool = key(6)
+    const lender = key(7)
+    const resolved = await program.methods
+      .deposit(new BN(1))
+      .accountsPartial({ lender, pool, vault: key(8), source: key(9) })
+      .pubkeys()
+
+    expect(lenderShareAddress(pool, lender).equals(resolved.lenderShare as PublicKey)).toBe(true)
+    expect(lenderShareAddress(key(5), lender).equals(lenderShareAddress(pool, lender))).toBe(false)
   })
 
   it('gives every nonce its own loan, including the largest u64', () => {

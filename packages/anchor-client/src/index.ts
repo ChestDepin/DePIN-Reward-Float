@@ -4,6 +4,7 @@ import { type RewardFloat, rewardFloatIdl } from './idl/reward-float.ts'
 
 export * from './accounts.ts'
 export * from './borrow.ts'
+export * from './deposit.ts'
 export { type RewardFloat, rewardFloatIdl } from './idl/reward-float.ts'
 export * from './pda.ts'
 export * from './repay.ts'

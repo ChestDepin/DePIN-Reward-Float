@@ -85,6 +85,10 @@ describe('decoding program accounts', () => {
     expect(operator.usedNonces).toEqual([7n, 0n, 0n, 0n])
     expect(pool.attestor.equals(key(3))).toBe(true)
     expect(pool.totalDeposits).toBe(500_000_000n)
+    expect(pool.accrualRate).toBe(24_000_000_000n)
+    // u128: larger than any u64, so it has to come through as a bigint unrounded.
+    expect(pool.accrualRateTime).toBe(42_960_000_000_000_000_000n)
+    expect(pool.accrualRemainders).toBe(5n)
   })
 
   it('refuses bytes of another account type', async () => {

@@ -38,8 +38,11 @@ pub struct Repay<'info> {
 pub fn handle_repay(ctx: Context<Repay>, max_amount: u64) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let loan = &mut ctx.accounts.loan;
+    let pool = &mut ctx.accounts.pool;
+    pool.untrack(loan)?;
     let accrued = loan.accrue(now)?;
     let repayment = loan.apply_repayment(max_amount)?;
+    pool.track(loan)?;
     let paid = repayment.total();
 
     let account = &mut ctx.accounts.operator_account;
@@ -55,7 +58,6 @@ pub fn handle_repay(ctx: Context<Repay>, max_amount: u64) -> Result<()> {
             .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
     }
 
-    let pool = &mut ctx.accounts.pool;
     pool.total_borrowed = pool
         .total_borrowed
         .checked_sub(repayment.principal)

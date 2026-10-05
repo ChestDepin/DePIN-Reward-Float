@@ -56,4 +56,6 @@ pub enum RewardFloatError {
     OpenLoansMismatch,
     #[msg("the operator already has the maximum number of open loans")]
     TooManyOpenLoans,
+    #[msg("the deposit is worth less than one share of the pool")]
+    DepositTooSmall,
 }
