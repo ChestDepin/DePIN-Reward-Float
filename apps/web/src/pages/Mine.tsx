@@ -3,7 +3,7 @@ import { useOperatorIdentity } from '../lib/wallet'
 
 // Адреса живе у шляху, тож своя сторінка — це просто шлях зі своєю адресою.
 // Без цього переходу посилання в шапці не мали б куди вести до підключення.
-const Mine = ({ section }: { section: 'history' | 'limit' }) => {
+const Mine = ({ section }: { section: 'history' | 'limit' | 'position' }) => {
   const identity = useOperatorIdentity()
 
   if (identity.status === 'connected') {
