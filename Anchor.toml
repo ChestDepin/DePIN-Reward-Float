@@ -6,14 +6,16 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-reward_float = "RewardFLoat11111111111111111111111111111111"
+reward_float = "DYAhSCwm3zAdB5Li9wKxJknjgvN7SkQpQMRhpNoJdJJJ"
 
+# Kept although nothing runs on localnet: without it, anchor-cli on a fresh clone with
+# no target/deploy generates a new program keypair and rewrites declare_id! silently.
 [programs.localnet]
-reward_float = "RewardFLoat11111111111111111111111111111111"
+reward_float = "DYAhSCwm3zAdB5Li9wKxJknjgvN7SkQpQMRhpNoJdJJJ"
 
 [provider]
 cluster = "devnet"
-wallet = "~/.config/solana/id.json"
+wallet = "~/.config/solana/depinfloat-devnet-deployer.json"
 
 [scripts]
 test = "pnpm --filter @drf/anchor-client test"

@@ -12,7 +12,7 @@ pub mod state;
 use instructions::*;
 pub use state::*;
 
-declare_id!("RewardFLoat11111111111111111111111111111111");
+declare_id!("DYAhSCwm3zAdB5Li9wKxJknjgvN7SkQpQMRhpNoJdJJJ");
 
 #[program]
 pub mod reward_float {
