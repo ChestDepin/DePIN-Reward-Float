@@ -187,7 +187,7 @@ fresh deployment would start out screaming.
 | `/history/:address` | monthly payouts per network |
 | `/limit/:address` | the limit, its factors, or the refusal |
 | `/borrow` | the full cost of a loan before signing it; the loan itself is made on devnet |
-| `/position/:address` | open loans read from devnet: debt, interest accrued, next payment |
+| `/position/:address` | open loans read from devnet: debt, interest accrued, next payment; the owner repays from here |
 
 The address lives in the path because payout history is public; a connected wallet is just
 one address among them.

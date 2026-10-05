@@ -1,12 +1,28 @@
-import { fetchOpenLoans, type LoanAccount, type OnChain } from '@drf/anchor-client'
-import { loanPosition, type NextPayment, operatorPosition } from '@drf/shared/loan'
-import { useConnection } from '@solana/wallet-adapter-react'
-import { PublicKey } from '@solana/web3.js'
-import { useEffect, useState } from 'react'
+import {
+  fetchOpenLoans,
+  fetchPool,
+  fetchStableBalance,
+  type LoanAccount,
+  type OnChain,
+  type PoolAccount,
+  repayInstruction,
+  rewardFloatProgram,
+} from '@drf/anchor-client'
+import {
+  allocateRepayment,
+  loanPosition,
+  type NextPayment,
+  operatorPosition,
+  repayAllAmount,
+} from '@drf/shared/loan'
+import { useConnection, useWallet } from '@solana/wallet-adapter-react'
+import { PublicKey, Transaction } from '@solana/web3.js'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Empty } from '../components/Answer'
+import { type BorrowFailure, describeBorrowFailure, parseStableAmount } from '../lib/borrow'
 import { formatCost } from '../lib/format'
-import { useAddressParam } from '../lib/wallet'
+import { useAddressParam, useOperatorIdentity } from '../lib/wallet'
 
 type Loans =
   | { status: 'loading' }
@@ -31,12 +47,16 @@ function nextText(next: NextPayment): string {
     : `${amount} now, late since ${day(next.since)}`
 }
 
+function secondsNow(): bigint {
+  return BigInt(Math.floor(Date.now() / 1000))
+}
+
 // A minute, not a second: shown in cents, a few hundred dollars of debt takes hours to
 // move by one, and a page re-rendered every second would show the same figure anyway.
 function useNow(): bigint {
-  const [now, setNow] = useState(() => BigInt(Math.floor(Date.now() / 1000)))
+  const [now, setNow] = useState(secondsNow)
   useEffect(() => {
-    const timer = setInterval(() => setNow(BigInt(Math.floor(Date.now() / 1000))), 60_000)
+    const timer = setInterval(() => setNow(secondsNow()), 60_000)
     return () => clearInterval(timer)
   }, [])
   return now
@@ -44,13 +64,24 @@ function useNow(): bigint {
 
 const Position = () => {
   const address = useAddressParam()
+  const identity = useOperatorIdentity()
   const { connection } = useConnection()
   const now = useNow()
   const [loans, setLoans] = useState<Loans>({ status: 'loading' })
+  const [reads, setReads] = useState(0)
+  // Kept here, not in the repay form: rereading the loans unmounts the form, and after a
+  // full repayment there is no form left to show it in.
+  const [repaid, setRepaid] = useState<string | null>(null)
+  useEffect(() => {
+    void address
+    setRepaid(null)
+  }, [address])
 
   useEffect(() => {
     if (address === null) return
     let live = true
+    // `reads` only restarts the effect: a repayment changes the loans on the chain.
+    void reads
     setLoans({ status: 'loading' })
     fetchOpenLoans(connection, new PublicKey(address))
       .then((found) => {
@@ -67,12 +98,26 @@ const Position = () => {
     return () => {
       live = false
     }
-  }, [connection, address])
+  }, [connection, address, reads])
+  const owner = identity.status === 'connected' && identity.address === address
 
   return (
     <div>
       <h1 className="text-[13px] sm:text-[15px] tracking-[0.18em] text-dim">POSITION</h1>
       <p className="mt-2 break-all text-[11px] sm:text-[12px] text-dim">{address ?? '—'}</p>
+      {repaid !== null && (
+        <p className="mt-6 text-[12px] leading-relaxed">
+          Repaid.{' '}
+          <a
+            href={`https://explorer.solana.com/tx/${repaid}?cluster=devnet`}
+            className="underline underline-offset-4"
+            target="_blank"
+            rel="noreferrer"
+          >
+            transaction
+          </a>
+        </p>
+      )}
 
       {address === null && (
         <Empty>This is not a Solana address, so there is nothing to read.</Empty>
@@ -92,7 +137,20 @@ const Position = () => {
         </Empty>
       )}
       {address !== null && loans.status === 'ready' && loans.loans.length > 0 && (
-        <Open loans={loans.loans} now={now} />
+        <>
+          <Open loans={loans.loans} now={now} />
+          {owner && (
+            <Repay
+              operator={new PublicKey(address)}
+              loans={loans.loans}
+              now={now}
+              onRepaid={(signature) => {
+                setRepaid(signature)
+                setReads((n) => n + 1)
+              }}
+            />
+          )}
+        </>
       )}
     </div>
   )
@@ -151,6 +209,227 @@ const Open = ({ loans, now }: { loans: OnChain<LoanAccount>[]; now: bigint }) =>
         minute. A payment includes the interest that will have accrued by its date. Paying ahead
         moves the next date out; an instalment left unpaid stays due until it is paid.
       </p>
+    </>
+  )
+}
+
+type RepayChain =
+  | { status: 'loading' }
+  | { status: 'unreachable'; message: string }
+  | { status: 'ready'; pools: Map<string, OnChain<PoolAccount>>; balance: bigint }
+
+type Choice = 'next' | 'all' | 'custom'
+
+type RepayStage =
+  | { step: 'idle' }
+  | { step: 'signing' | 'confirming' }
+  | { step: 'failed'; failure: BorrowFailure }
+
+function repayFailureText(failure: BorrowFailure): string {
+  if (failure.kind === 'rejected') return 'The wallet declined. Nothing was sent.'
+  if (failure.kind === 'program') return `The program refused the repayment: ${failure.message}.`
+  return `The repayment did not go through${failure.kind === 'unknown' ? `: ${failure.message}` : '.'}`
+}
+
+const Repay = ({
+  operator,
+  loans,
+  now,
+  onRepaid,
+}: {
+  operator: PublicKey
+  loans: OnChain<LoanAccount>[]
+  now: bigint
+  onRepaid: (signature: string) => void
+}) => {
+  const { connection } = useConnection()
+  const { sendTransaction } = useWallet()
+  const program = useMemo(() => rewardFloatProgram(connection), [connection])
+  const [chain, setChain] = useState<RepayChain>({ status: 'loading' })
+  const [choice, setChoice] = useState<Choice>('next')
+  const [customText, setCustomText] = useState('')
+  const [stage, setStage] = useState<RepayStage>({ step: 'idle' })
+
+  const poolKeys = useMemo(
+    () => [...new Set(loans.map((loan) => loan.account.pool.toBase58()))],
+    [loans],
+  )
+  useEffect(() => {
+    let live = true
+    Promise.all(poolKeys.map((pool) => fetchPool(connection, new PublicKey(pool))))
+      .then(async (pools) => {
+        // One pool per stablecoin, and the page lends one stablecoin, so one balance.
+        const stableMint = pools[0]?.account.stableMint
+        const balance =
+          stableMint === undefined ? 0n : await fetchStableBalance(connection, operator, stableMint)
+        if (live) {
+          setChain({
+            status: 'ready',
+            pools: new Map(pools.map((pool) => [pool.address.toBase58(), pool])),
+            balance,
+          })
+        }
+      })
+      .catch((error: unknown) => {
+        if (live) {
+          setChain({
+            status: 'unreachable',
+            message: error instanceof Error ? error.message : String(error),
+          })
+        }
+      })
+    return () => {
+      live = false
+    }
+  }, [connection, operator, poolKeys])
+
+  const states = loans.map((loan) => loan.account)
+  const amountAt = (at: bigint): bigint | null => {
+    if (choice === 'all') return repayAllAmount(states, at)
+    if (choice === 'custom') return parseStableAmount(customText)
+    const next = operatorPosition(states, at).next
+    return next === null ? null : next.principal + next.interest
+  }
+  const amount = amountAt(now)
+  const allocation = amount === null ? null : allocateRepayment(states, amount, now)
+  // Repaying everything asks for a little more than is owed, and only what is owed is
+  // taken; the wallet needs to hold the debt, not the ceiling.
+  const needed = choice === 'all' ? operatorPosition(states, now).owed : amount
+  const short = chain.status === 'ready' && needed !== null && needed > chain.balance
+  const busy = stage.step === 'signing' || stage.step === 'confirming'
+  const canSign = chain.status === 'ready' && allocation?.ok === true && !short && !busy
+
+  const sign = async () => {
+    if (chain.status !== 'ready') return
+    const at = secondsNow()
+    const fresh = amountAt(at)
+    const split = fresh === null ? null : allocateRepayment(states, fresh, at)
+    if (split === null || !split.ok) return
+    try {
+      const instructions = await Promise.all(
+        loans.flatMap((loan, index) => {
+          const maxAmount = split.perLoan[index] ?? 0n
+          const pool = chain.pools.get(loan.account.pool.toBase58())
+          if (maxAmount === 0n || pool === undefined) return []
+          return [repayInstruction(program, { payer: operator, pool, loan, maxAmount })]
+        }),
+      )
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
+      const transaction = new Transaction({
+        feePayer: operator,
+        blockhash,
+        lastValidBlockHeight,
+      }).add(...instructions)
+
+      setStage({ step: 'signing' })
+      const signature = await sendTransaction(transaction, connection)
+
+      setStage({ step: 'confirming' })
+      const confirmation = await connection.confirmTransaction(
+        { signature, blockhash, lastValidBlockHeight },
+        'confirmed',
+      )
+      if (confirmation.value.err !== null) {
+        throw new Error(JSON.stringify(confirmation.value.err))
+      }
+      onRepaid(signature)
+    } catch (error) {
+      setStage({ step: 'failed', failure: describeBorrowFailure(error) })
+    }
+  }
+
+  const option = (value: Choice, label: string) => (
+    <label className="flex items-center gap-2">
+      <input
+        type="radio"
+        name="repay"
+        checked={choice === value}
+        onChange={() => setChoice(value)}
+        className="accent-current"
+      />
+      <span>{label}</span>
+    </label>
+  )
+
+  return (
+    <>
+      <h2 className="mt-12 text-[11px] sm:text-[12px] tracking-[0.14em] text-dim">REPAY</h2>
+      {chain.status === 'loading' && (
+        <p className="mt-3 text-[12px] text-dim">reading the pool and your balance…</p>
+      )}
+      {chain.status === 'unreachable' && (
+        <p className="mt-3 text-[12px] text-amber">Devnet could not be read: {chain.message}</p>
+      )}
+      {chain.status === 'ready' && (
+        <>
+          <div className="mt-3 border-t border-rule">
+            <DefRow label="in your wallet" value={formatCost(chain.balance)} />
+          </div>
+          <div className="mt-4 flex flex-col gap-3 text-[12px] sm:text-[13px]">
+            {option('next', 'the next payment')}
+            {option('all', 'everything, closing every loan')}
+            <div className="flex flex-wrap items-center gap-3">
+              {option('custom', 'another amount, USDC')}
+              <input
+                value={customText}
+                onChange={(event) => {
+                  setCustomText(event.target.value)
+                  setChoice('custom')
+                }}
+                inputMode="decimal"
+                placeholder="0.00"
+                className="w-32 border border-rule bg-ground px-3 py-2 tnum outline-none focus:border-ink"
+              />
+            </div>
+          </div>
+
+          {amount !== null && allocation?.ok === true && (
+            <div className="mt-6 border-t border-rule">
+              <DefRow
+                label={choice === 'all' ? 'at most' : 'you repay'}
+                value={formatCost(amount)}
+              />
+            </div>
+          )}
+          {allocation?.ok === false && allocation.reason === 'over-debt' && (
+            <p className="mt-3 text-[12px] text-amber">
+              That is more than everything owed: up to {formatCost(allocation.max)}.
+            </p>
+          )}
+          {short && allocation?.ok === true && (
+            <p className="mt-3 text-[12px] text-amber">
+              Your wallet holds {formatCost(chain.balance)}, less than this repayment.
+            </p>
+          )}
+          <p className="mt-6 max-w-[60ch] text-[11px] sm:text-[12px] leading-relaxed text-dim">
+            Interest is paid before principal, and what is due now before what is due later.
+            Repaying everything allows for ten minutes more of interest, since the debt grows while
+            the transaction is on its way; only the debt is taken, the rest stays in the wallet.
+          </p>
+
+          <div className="mt-6">
+            <button
+              type="button"
+              disabled={!canSign}
+              onClick={() => void sign()}
+              className="border border-ink px-4 py-2 text-[12px] tracking-[0.14em] disabled:border-rule disabled:text-dim"
+            >
+              SIGN AND REPAY
+            </button>
+            {stage.step === 'signing' && (
+              <p className="mt-3 text-[12px] text-dim">waiting for the wallet…</p>
+            )}
+            {stage.step === 'confirming' && (
+              <p className="mt-3 text-[12px] text-dim">waiting for devnet to confirm…</p>
+            )}
+            {stage.step === 'failed' && (
+              <p className="mt-3 max-w-[60ch] text-[12px] leading-relaxed text-amber">
+                {repayFailureText(stage.failure)}
+              </p>
+            )}
+          </div>
+        </>
+      )}
     </>
   )
 }
