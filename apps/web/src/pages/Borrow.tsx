@@ -1,18 +1,24 @@
 import {
   borrowInstructions,
+  delegationInstructions,
   fetchOpenLoans,
   fetchOperatorAccount,
   fetchPool,
+  fetchRewardAccount,
+  type LoanAccount,
   loanAddress,
   type OnChain,
   type OperatorAccount,
   openLoansForBorrow,
+  operatorAccountAddress,
   type PoolAccount,
   poolAddress,
+  type RewardAccount,
   rewardFloatProgram,
 } from '@drf/anchor-client'
+import type { IssuedRateAttestation } from '@drf/shared/api'
 import { MAX_TERM_PERIODS, REPAYMENT_PERIOD_SECONDS, type ScheduleRow } from '@drf/shared/loan'
-import type { SolanaAddress } from '@drf/shared/schemas'
+import { type SolanaAddress, SUPPORTED_NETWORKS, solanaAddressSchema } from '@drf/shared/schemas'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { PublicKey, Transaction } from '@solana/web3.js'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -27,7 +33,8 @@ import {
   quoteLoan,
 } from '../lib/borrow'
 import { chainConfig } from '../lib/chain'
-import { formatCents, formatCost, formatUsd, roundRowsToCents } from '../lib/format'
+import { formatCents, formatCost, formatTokens, formatUsd, roundRowsToCents } from '../lib/format'
+import { delegationFor, foreignDelegate } from '../lib/mandate'
 import { useOperatorIdentity } from '../lib/wallet'
 
 const DefRow = ({ label, value }: { label: string; value: string }) => (
@@ -47,14 +54,34 @@ type ChainState =
   | { status: 'unreachable'; message: string }
   | { status: 'ready'; pool: OnChain<PoolAccount>; operatorAccount: OperatorAccount | null }
 
+// What the loan's delegation would be, read before the operator signs: the reward rate,
+// the reward account with whatever delegate it has, and the loans already repaid from it.
+type RewardPreview =
+  | { status: 'none' }
+  | { status: 'loading' }
+  | { status: 'no-rate' }
+  | { status: 'unreachable'; message: string }
+  | {
+      status: 'ready'
+      rate: IssuedRateAttestation
+      account: RewardAccount
+      loans: OnChain<LoanAccount>[]
+    }
+
+type SignFailure =
+  | BorrowFailure
+  | { kind: 'attestation' }
+  | { kind: 'no-rate' }
+  | { kind: 'foreign' }
+
 type Stage =
   | { step: 'idle' }
   | { step: 'attesting' | 'preparing' | 'signing' | 'confirming' }
   | { step: 'done'; signature: string; loan: string }
-  | { step: 'failed'; failure: BorrowFailure | { kind: 'attestation' } }
+  | { step: 'failed'; failure: SignFailure }
 
 const STAGE_TEXT = {
-  attesting: 'asking the api to sign your limit…',
+  attesting: 'asking the api to sign your limit and the reward rate…',
   preparing: 'reading your open loans from the chain…',
   signing: 'waiting for the wallet…',
   confirming: 'waiting for devnet to confirm…',
@@ -68,10 +95,14 @@ function dueDate(afterSeconds: bigint): string {
   return new Date(Date.now() + Number(afterSeconds) * 1000).toISOString().slice(0, 10)
 }
 
-function failureText(failure: BorrowFailure | { kind: 'attestation' }): string {
+function failureText(failure: SignFailure): string {
   switch (failure.kind) {
     case 'attestation':
       return 'The api did not sign a limit for this wallet, so there is nothing to borrow against.'
+    case 'no-rate':
+      return 'The api could not sign a rate for the reward token, so the delegation cannot be sized. Nothing was sent; try again in a minute.'
+    case 'foreign':
+      return 'Another delegate appeared on the reward account since the page read it. Nothing was sent; read the warning above and sign again.'
     case 'rejected':
       return 'The wallet declined. Nothing was sent.'
     case 'rate-moved':
@@ -199,6 +230,57 @@ const BorrowForm = ({
   const [sweepText, setSweepText] = useState('50')
   const [chosenNetwork, setChosenNetwork] = useState<string | null>(null)
   const [stage, setStage] = useState<Stage>({ step: 'idle' })
+  const [replaceDelegate, setReplaceDelegate] = useState(false)
+
+  const networks = useMemo(
+    () =>
+      limit.status === 'done' && limit.result.ok
+        ? borrowableNetworks(limit.result.value.networks, chainConfig.rewardMints)
+        : [],
+    [limit],
+  )
+  const network =
+    networks.find((option) => option.networkId === chosenNetwork && option.unavailable === null) ??
+    networks.find((option) => option.unavailable === null) ??
+    null
+  const rewardMint = network?.rewardMint ?? null
+  const rewardMintKey = rewardMint?.toBase58() ?? null
+
+  const [preview, setPreview] = useState<RewardPreview>({ status: 'none' })
+  useEffect(() => {
+    if (rewardMintKey === null) {
+      setPreview({ status: 'none' })
+      return
+    }
+    let live = true
+    const mint = new PublicKey(rewardMintKey)
+    // `reads` only restarts the effect: a loan just taken is one more to cover.
+    void reads
+    setPreview({ status: 'loading' })
+    setReplaceDelegate(false)
+    Promise.all([
+      api.issueRateAttestation(solanaAddressSchema.parse(rewardMintKey)),
+      fetchRewardAccount(connection, operatorKey, mint),
+      fetchOpenLoans(connection, operatorKey),
+    ])
+      .then(([rate, account, loans]) => {
+        if (!live) return
+        setPreview(
+          rate.ok ? { status: 'ready', rate: rate.value, account, loans } : { status: 'no-rate' },
+        )
+      })
+      .catch((error: unknown) => {
+        if (live) {
+          setPreview({
+            status: 'unreachable',
+            message: error instanceof Error ? error.message : String(error),
+          })
+        }
+      })
+    return () => {
+      live = false
+    }
+  }, [connection, operatorKey, rewardMintKey, reads])
 
   if (limit.status === 'loading' || chain.status === 'loading') {
     return <p className="text-[13px] text-dim">reading the limit and the pool…</p>
@@ -229,11 +311,6 @@ const BorrowForm = ({
     )
   }
 
-  const networks = borrowableNetworks(limit.result.value.networks, chainConfig.rewardMints)
-  const network =
-    networks.find((option) => option.networkId === chosenNetwork && option.unavailable === null) ??
-    networks.find((option) => option.unavailable === null) ??
-    null
   const limitUnits = attestedLimit(limit.result.value.networks)
   const debt = chain.operatorAccount?.totalDebt ?? 0n
   const { pool } = chain
@@ -249,7 +326,26 @@ const BorrowForm = ({
       ? STAGE_TEXT[stage.step]
       : null
   const busy = progress !== null
-  const canSign = quote.kind === 'quote' && network !== null && sweepBps !== null && !busy
+  const ours = operatorAccountAddress(operatorKey)
+  const token = network === null ? undefined : SUPPORTED_NETWORKS.get(network.networkId)?.token
+  const delegation =
+    preview.status === 'ready' && rewardMint !== null && quote.kind === 'quote' && amount !== null
+      ? delegationFor({
+          loans: preview.loans.map((loan) => loan.account),
+          rewardMint,
+          newLoan: { principal: amount, aprBps: quote.aprBps, termPeriods },
+          rate: BigInt(preview.rate.stablePerTrillionReward),
+          now: BigInt(Math.floor(Date.now() / 1000)),
+        })
+      : null
+  const foreign = preview.status === 'ready' ? foreignDelegate(preview.account, ours) : null
+  const canSign =
+    quote.kind === 'quote' &&
+    network !== null &&
+    sweepBps !== null &&
+    preview.status === 'ready' &&
+    (foreign === null || replaceDelegate) &&
+    !busy
 
   const sign = async () => {
     if (
@@ -261,18 +357,40 @@ const BorrowForm = ({
       return
     try {
       setStage({ step: 'attesting' })
-      const attestation = await api.issueLimitAttestation(operator)
+      const [attestation, rate] = await Promise.all([
+        api.issueLimitAttestation(operator),
+        api.issueRateAttestation(solanaAddressSchema.parse(network.rewardMint.toBase58())),
+      ])
       if (!attestation.ok) {
         setStage({ step: 'failed', failure: { kind: 'attestation' } })
         return
       }
+      if (!rate.ok) {
+        setStage({ step: 'failed', failure: { kind: 'no-rate' } })
+        return
+      }
 
       setStage({ step: 'preparing' })
-      const [operatorAccount, loans] = await Promise.all([
+      const [operatorAccount, loans, account] = await Promise.all([
         fetchOperatorAccount(connection, operatorKey),
         fetchOpenLoans(connection, operatorKey),
+        fetchRewardAccount(connection, operatorKey, network.rewardMint),
       ])
-      const instructions = await borrowInstructions(program, {
+      if (foreignDelegate(account, ours) !== null && !replaceDelegate) {
+        setStage({ step: 'failed', failure: { kind: 'foreign' } })
+        setReads((n) => n + 1)
+        return
+      }
+      // Sized again here, not taken from the screen: the rate and the loans are read at
+      // the moment of signing, and the allowance must not outgrow the debt (FR-014a).
+      const { allowance } = delegationFor({
+        loans: loans.map((loan) => loan.account),
+        rewardMint: network.rewardMint,
+        newLoan: { principal: amount, aprBps: quote.aprBps, termPeriods },
+        rate: BigInt(rate.value.stablePerTrillionReward),
+        now: BigInt(Math.floor(Date.now() / 1000)),
+      })
+      const borrow = await borrowInstructions(program, {
         operator: operatorKey,
         pool,
         attestation: attestation.value,
@@ -284,6 +402,16 @@ const BorrowForm = ({
         // Exactly the quoted rate: the cost on the screen is the cost signed (FR-009a).
         maxAprBps: quote.aprBps,
       })
+      // Approve first, in the same transaction (FR-014): the loan never exists without
+      // its delegation. The attestor's signature stays right before borrow, which reads it.
+      const instructions = [
+        ...delegationInstructions({
+          operator: operatorKey,
+          rewardMint: network.rewardMint,
+          allowance,
+        }),
+        ...borrow,
+      ]
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
       const transaction = new Transaction({
         feePayer: operatorKey,
@@ -435,9 +563,65 @@ const BorrowForm = ({
           <p className="mt-6 max-w-[60ch] text-[11px] sm:text-[12px] leading-relaxed text-dim">
             Interest runs by the second on what is still owed, so repaying early costs less. After
             the {Number(REPAYMENT_PERIOD_SECONDS / 86_400n) * termPeriods}-day term the same rate
-            keeps running. Withholding from rewards is not switched on yet: until it is, the loan is
-            repaid by hand.
+            keeps running.
           </p>
+
+          <Heading>REPAID FROM REWARDS</Heading>
+          {preview.status === 'loading' && (
+            <p className="mt-3 text-[12px] text-dim">reading the reward rate and account…</p>
+          )}
+          {preview.status === 'no-rate' && (
+            <p className="mt-3 max-w-[60ch] text-[12px] leading-relaxed text-amber">
+              The api has no rate for this reward token right now, so the delegation cannot be sized
+              and the loan cannot be signed. Try again in a minute.
+            </p>
+          )}
+          {preview.status === 'unreachable' && (
+            <p className="mt-3 text-[12px] text-amber">
+              Devnet could not be read: {preview.message}
+            </p>
+          )}
+          {delegation !== null && token !== undefined && (
+            <>
+              <div className="mt-3 border-t border-rule">
+                <DefRow
+                  label={`${token.symbol} the protocol may withhold, at most`}
+                  value={`${formatTokens(delegation.allowance.toString(), token.decimals)} ${token.symbol}`}
+                />
+                <DefRow
+                  label={`worth, at the attested rate: the most owed within the term on loans repaid from ${token.symbol}`}
+                  value={formatCost(delegation.ceiling)}
+                />
+              </div>
+              <p className="mt-6 max-w-[60ch] text-[11px] sm:text-[12px] leading-relaxed text-dim">
+                Signing the loan also lets the protocol take from your {token.symbol} account up to
+                this amount and never more than you owe. The account stays yours, and you revoke the
+                permission with one transaction on the{' '}
+                <Link to="/mandate" className="text-ink underline underline-offset-4">
+                  mandate
+                </Link>{' '}
+                page. Withholding is not switched on yet: until it is, the loan is repaid by hand.
+              </p>
+            </>
+          )}
+          {foreign !== null && token !== undefined && (
+            <div className="mt-6 max-w-[60ch] text-[12px] leading-relaxed text-amber">
+              <p>
+                Your {token.symbol} account already lets {foreign.delegate.toBase58()} take up to{' '}
+                {formatTokens(foreign.delegatedAmount.toString(), token.decimals)} {token.symbol}.
+                An account has one delegate: this loan would replace that permission.
+              </p>
+              <label className="mt-3 flex items-center gap-2 text-ink">
+                <input
+                  type="checkbox"
+                  checked={replaceDelegate}
+                  onChange={(event) => setReplaceDelegate(event.target.checked)}
+                  className="accent-current"
+                />
+                <span>Replace it</span>
+              </label>
+            </div>
+          )}
         </>
       )}
 

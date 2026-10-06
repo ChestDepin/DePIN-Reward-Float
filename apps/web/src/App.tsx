@@ -10,6 +10,7 @@ import NotFound from './pages/NotFound'
 // The program client, Anchor among it, is most of the bundle and only these pages need
 // it; loaded with the rest, it would weigh on every first screen (SC-009).
 const Borrow = lazy(() => import('./pages/Borrow'))
+const Mandate = lazy(() => import('./pages/Mandate'))
 const Position = lazy(() => import('./pages/Position'))
 
 const App = () => {
@@ -36,6 +37,14 @@ const App = () => {
           element={
             <Suspense fallback={<p className="text-[13px] text-dim">loading…</p>}>
               <Position />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/mandate"
+          element={
+            <Suspense fallback={<p className="text-[13px] text-dim">loading…</p>}>
+              <Mandate />
             </Suspense>
           }
         />

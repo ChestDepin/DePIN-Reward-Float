@@ -6,6 +6,7 @@ const NAV = [
   { to: '/limit', label: 'LIMIT' },
   { to: '/borrow', label: 'BORROW' },
   { to: '/position', label: 'POSITION' },
+  { to: '/mandate', label: 'MANDATE' },
 ]
 
 const Terminal = () => {

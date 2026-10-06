@@ -142,7 +142,9 @@ describe('createApiClient', () => {
     const calls: [string, string | undefined][] = []
     const client = clientOver(async (input, init) => {
       calls.push([String(input), init?.method])
-      return answered(200, attestation)
+      // 201, as the api answers an issued attestation: a client that took only 200 read
+      // every real one as broken while this test, answering 200, stayed green.
+      return answered(201, attestation)
     })
 
     const result = await client.issueLimitAttestation(WALLET)
@@ -151,6 +153,51 @@ describe('createApiClient', () => {
       [`https://api.example.com/v1/operators/${WALLET}/attestations/limit`, 'POST'],
     ])
     expect(result).toEqual({ ok: true, value: attestation })
+  })
+
+  it('asks for a rate attestation with the mint in a json body', async () => {
+    const attestation = {
+      rewardMint: WALLET,
+      stablePerTrillionReward: '2406662',
+      attestor: WALLET,
+      message: '3yZe7d',
+      signature: '5Hx2',
+      pricedAt: '2026-10-06T10:35:21.000Z',
+      expiresAt: '2026-10-06T10:39:26.537Z',
+    }
+    const calls: [string, string | undefined, unknown, unknown][] = []
+    const client = clientOver(async (input, init) => {
+      calls.push([
+        String(input),
+        init?.method,
+        new Headers(init?.headers).get('content-type'),
+        init?.body,
+      ])
+      return answered(201, attestation)
+    })
+
+    const result = await client.issueRateAttestation(WALLET)
+
+    expect(calls).toEqual([
+      [
+        'https://api.example.com/v1/attestations/rate',
+        'POST',
+        'application/json',
+        JSON.stringify({ rewardMint: WALLET }),
+      ],
+    ])
+    expect(result).toEqual({ ok: true, value: attestation })
+  })
+
+  it('reads an api without rates as data that is unavailable', async () => {
+    const client = clientOver(async () =>
+      answered(503, { error: { code: 'DATA_UNAVAILABLE', message: 'rates are not set up' } }),
+    )
+
+    expect(await client.issueRateAttestation(WALLET)).toEqual({
+      ok: false,
+      failure: { kind: 'data-unavailable' },
+    })
   })
 
   // Сервера може не бути взагалі — це стан оператора, а не наш виняток, і

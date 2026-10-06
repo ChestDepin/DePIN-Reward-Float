@@ -2,7 +2,9 @@ import {
   type CreditLimit,
   creditLimitSchema,
   type IssuedAttestation,
+  type IssuedRateAttestation,
   issuedAttestationSchema,
+  issuedRateAttestationSchema,
   type PayoutHistory,
   payoutHistorySchema,
 } from '@drf/shared/api'
@@ -35,7 +37,8 @@ const FAILURE_BY_CODE = new Map<string, ApiFailure>([
 ])
 
 export function readAnswer<T>(schema: z.ZodType<T>, status: number, body: unknown): ApiResult<T> {
-  if (status === 200) {
+  // An issued attestation comes back as 201 Created.
+  if (status >= 200 && status < 300) {
     const parsed = schema.safeParse(body)
 
     return parsed.success ? { ok: true, value: parsed.data } : BROKEN
@@ -66,6 +69,7 @@ export type ApiClient = {
   creditLimit(address: SolanaAddress): Promise<ApiResult<CreditLimit>>
   refreshCreditLimit(address: SolanaAddress): Promise<ApiResult<CreditLimit>>
   issueLimitAttestation(address: SolanaAddress): Promise<ApiResult<IssuedAttestation>>
+  issueRateAttestation(rewardMint: SolanaAddress): Promise<ApiResult<IssuedRateAttestation>>
 }
 
 export type ApiClientOptions = {
@@ -81,10 +85,20 @@ export function createApiClient({
     schema: z.ZodType<T>,
     path: string,
     method: 'GET' | 'POST',
+    json?: unknown,
   ): Promise<ApiResult<T>> => {
     let response: Response
     try {
-      response = await fetch(`${baseUrl}${path}`, { method })
+      response = await fetch(
+        `${baseUrl}${path}`,
+        json === undefined
+          ? { method }
+          : {
+              method,
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(json),
+            },
+      )
     } catch {
       return { ok: false, failure: { kind: 'unreachable' } }
     }
@@ -107,6 +121,8 @@ export function createApiClient({
       call(creditLimitSchema, `/v1/operators/${address}/limit/refresh`, 'POST'),
     issueLimitAttestation: (address) =>
       call(issuedAttestationSchema, `/v1/operators/${address}/attestations/limit`, 'POST'),
+    issueRateAttestation: (rewardMint) =>
+      call(issuedRateAttestationSchema, '/v1/attestations/rate', 'POST', { rewardMint }),
   }
 }
 
