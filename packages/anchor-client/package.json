@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "seed:pool": "node --env-file-if-exists=../../.env scripts/seed-pool.ts",
+    "seed:reward-mints": "node --env-file-if-exists=../../.env scripts/seed-reward-mints.ts",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json"
   },

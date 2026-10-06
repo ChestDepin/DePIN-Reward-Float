@@ -32,7 +32,7 @@ import {
 
 const TOKEN_PROGRAM_ID = utils.token.TOKEN_PROGRAM_ID
 const BPF_LOADER_UPGRADEABLE = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111')
-const MINT_SIZE = 82
+export const MINT_SIZE = 82
 const INITIALIZE_MINT_2 = 20
 // What USDC has, so amounts read the same on devnet as they would on mainnet.
 const STABLE_DECIMALS = 6
@@ -171,7 +171,7 @@ export function initializeMintInstruction(input: {
 
 const keypairSchema = z.array(z.number().int().min(0).max(255)).length(64)
 
-function readKeypair(path: string): Keypair {
+export function readKeypair(path: string): Keypair {
   const bytes = keypairSchema.parse(JSON.parse(readFileSync(path, 'utf8')))
   return Keypair.fromSecretKey(Uint8Array.from(bytes))
 }
