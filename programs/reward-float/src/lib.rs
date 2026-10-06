@@ -7,6 +7,7 @@ use anchor_lang::prelude::*;
 
 pub mod error;
 pub mod instructions;
+pub mod slippage;
 pub mod state;
 
 use instructions::*;
