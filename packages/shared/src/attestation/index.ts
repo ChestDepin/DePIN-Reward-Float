@@ -1,2 +1,3 @@
 // Канонічна серіалізація і підпис атестацій ліміту та курсу (FR-012a, FR-015a).
 export * from './limit.ts'
+export * from './rate.ts'
