@@ -185,6 +185,32 @@ export type RewardFloat = {
           }
         },
         {
+          "name": "rewardWatch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  97,
+                  116,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "operator"
+              },
+              {
+                "kind": "account",
+                "path": "rewardMint"
+              }
+            ]
+          }
+        },
+        {
           "name": "instructions",
           "address": "Sysvar1nstructions1111111111111111111111111"
         },
@@ -709,6 +735,119 @@ export type RewardFloat = {
           "type": "pubkey"
         }
       ]
+    },
+    {
+      "name": "sweep",
+      "discriminator": [
+        40,
+        23,
+        234,
+        175,
+        14,
+        61,
+        154,
+        177
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true,
+          "relations": [
+            "conversionVault"
+          ]
+        },
+        {
+          "name": "operatorAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  112,
+                  101,
+                  114,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "operator_account.owner",
+                "account": "operatorAccount"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rewardAccount",
+          "writable": true
+        },
+        {
+          "name": "rewardWatch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  97,
+                  116,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "operator_account.owner",
+                "account": "operatorAccount"
+              },
+              {
+                "kind": "account",
+                "path": "conversion_vault.reward_mint",
+                "account": "conversionVault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "conversionVault"
+        },
+        {
+          "name": "stableVault",
+          "writable": true,
+          "relations": [
+            "conversionVault"
+          ]
+        },
+        {
+          "name": "rewardVault",
+          "writable": true,
+          "relations": [
+            "conversionVault"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "instructions",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -776,6 +915,47 @@ export type RewardFloat = {
         109,
         188
       ]
+    },
+    {
+      "name": "rewardWatch",
+      "discriminator": [
+        246,
+        204,
+        171,
+        23,
+        220,
+        125,
+        215,
+        226
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "sweepSkipped",
+      "discriminator": [
+        162,
+        62,
+        198,
+        173,
+        252,
+        198,
+        162,
+        124
+      ]
+    },
+    {
+      "name": "swept",
+      "discriminator": [
+        254,
+        138,
+        9,
+        198,
+        192,
+        61,
+        165,
+        135
+      ]
     }
   ],
   "errors": [
@@ -812,7 +992,7 @@ export type RewardFloat = {
     {
       "code": 6006,
       "name": "attestationMissing",
-      "msg": "borrow must come right after the ed25519 checks of the rate and then the limit attestation"
+      "msg": "borrow must come right after the ed25519 checks of the rate and then the limit attestation, and sweep right after that of the rate"
     },
     {
       "code": 6007,
@@ -1200,6 +1380,109 @@ export type RewardFloat = {
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "rewardWatch",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "rewardMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "balance",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sweepSkipped",
+      "docs": [
+        "A payout left untouched because the market fell outside the tolerance (FR-015a). The",
+        "reason stays on chain for the operator to see, and the payout for a later sweep."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "rewardMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "withheld",
+            "type": "u64"
+          },
+          {
+            "name": "stablePerTrillionReward",
+            "type": "u64"
+          },
+          {
+            "name": "deviationBps",
+            "type": "u16"
+          },
+          {
+            "name": "maxSlippageBps",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "swept",
+      "docs": [
+        "A withholding that went through, one per loan it repaid (FR-016)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan",
+            "type": "pubkey"
+          },
+          {
+            "name": "operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "rewardMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "withheld",
+            "type": "u64"
+          },
+          {
+            "name": "paid",
+            "type": "u64"
+          },
+          {
+            "name": "stablePerTrillionReward",
+            "type": "u64"
+          },
+          {
+            "name": "deviationBps",
+            "type": "u16"
+          },
+          {
+            "name": "remainingDebt",
+            "type": "u64"
           }
         ]
       }
@@ -1393,6 +1676,32 @@ export const rewardFloatIdl: RewardFloat = {
           }
         },
         {
+          "name": "rewardWatch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  97,
+                  116,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "operator"
+              },
+              {
+                "kind": "account",
+                "path": "rewardMint"
+              }
+            ]
+          }
+        },
+        {
           "name": "instructions",
           "address": "Sysvar1nstructions1111111111111111111111111"
         },
@@ -1917,6 +2226,119 @@ export const rewardFloatIdl: RewardFloat = {
           "type": "pubkey"
         }
       ]
+    },
+    {
+      "name": "sweep",
+      "discriminator": [
+        40,
+        23,
+        234,
+        175,
+        14,
+        61,
+        154,
+        177
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true,
+          "relations": [
+            "conversionVault"
+          ]
+        },
+        {
+          "name": "operatorAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  112,
+                  101,
+                  114,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "operator_account.owner",
+                "account": "operatorAccount"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rewardAccount",
+          "writable": true
+        },
+        {
+          "name": "rewardWatch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  97,
+                  116,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "operator_account.owner",
+                "account": "operatorAccount"
+              },
+              {
+                "kind": "account",
+                "path": "conversion_vault.reward_mint",
+                "account": "conversionVault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "conversionVault"
+        },
+        {
+          "name": "stableVault",
+          "writable": true,
+          "relations": [
+            "conversionVault"
+          ]
+        },
+        {
+          "name": "rewardVault",
+          "writable": true,
+          "relations": [
+            "conversionVault"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "instructions",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -1984,6 +2406,47 @@ export const rewardFloatIdl: RewardFloat = {
         109,
         188
       ]
+    },
+    {
+      "name": "rewardWatch",
+      "discriminator": [
+        246,
+        204,
+        171,
+        23,
+        220,
+        125,
+        215,
+        226
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "sweepSkipped",
+      "discriminator": [
+        162,
+        62,
+        198,
+        173,
+        252,
+        198,
+        162,
+        124
+      ]
+    },
+    {
+      "name": "swept",
+      "discriminator": [
+        254,
+        138,
+        9,
+        198,
+        192,
+        61,
+        165,
+        135
+      ]
     }
   ],
   "errors": [
@@ -2020,7 +2483,7 @@ export const rewardFloatIdl: RewardFloat = {
     {
       "code": 6006,
       "name": "attestationMissing",
-      "msg": "borrow must come right after the ed25519 checks of the rate and then the limit attestation"
+      "msg": "borrow must come right after the ed25519 checks of the rate and then the limit attestation, and sweep right after that of the rate"
     },
     {
       "code": 6007,
@@ -2408,6 +2871,109 @@ export const rewardFloatIdl: RewardFloat = {
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "rewardWatch",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "rewardMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "balance",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sweepSkipped",
+      "docs": [
+        "A payout left untouched because the market fell outside the tolerance (FR-015a). The",
+        "reason stays on chain for the operator to see, and the payout for a later sweep."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "rewardMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "withheld",
+            "type": "u64"
+          },
+          {
+            "name": "stablePerTrillionReward",
+            "type": "u64"
+          },
+          {
+            "name": "deviationBps",
+            "type": "u16"
+          },
+          {
+            "name": "maxSlippageBps",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "swept",
+      "docs": [
+        "A withholding that went through, one per loan it repaid (FR-016)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan",
+            "type": "pubkey"
+          },
+          {
+            "name": "operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "rewardMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "withheld",
+            "type": "u64"
+          },
+          {
+            "name": "paid",
+            "type": "u64"
+          },
+          {
+            "name": "stablePerTrillionReward",
+            "type": "u64"
+          },
+          {
+            "name": "deviationBps",
+            "type": "u16"
+          },
+          {
+            "name": "remainingDebt",
+            "type": "u64"
           }
         ]
       }

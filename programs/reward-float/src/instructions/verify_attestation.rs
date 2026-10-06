@@ -92,18 +92,19 @@ impl RateAttestation {
     }
 }
 
-/// Reads the rate attestation signed two instructions before the current one, right
-/// before the limit's, and checks it against the pool's attestor, the loan's reward
-/// token and the clock.
+/// Reads the rate attestation signed `back` instructions before the current one and checks
+/// it against the pool's attestor, the reward token and the clock. Borrow has the limit's
+/// check between the two, so for it the rate is two back; for a sweep it is right before.
 pub fn verify_rate_attestation(
     instructions: &AccountInfo,
     attestor: &Pubkey,
     reward_mint: &Pubkey,
     now: i64,
+    back: u16,
 ) -> Result<RateAttestation> {
     let current = load_current_index_checked(instructions)?;
-    require!(current > 1, RewardFloatError::AttestationMissing);
-    let ix = load_instruction_at_checked(usize::from(current - 2), instructions)?;
+    require!(current >= back, RewardFloatError::AttestationMissing);
+    let ix = load_instruction_at_checked(usize::from(current - back), instructions)?;
     let attestation = RateAttestation::parse(attested_message(&ix, attestor)?)?;
     attestation.check(reward_mint, now)?;
     Ok(attestation)
@@ -669,6 +670,7 @@ mod tests {
     fn verify_rate(
         instructions: &[Instruction],
         current: u16,
+        back: u16,
         attestor: &Pubkey,
         mint: &Pubkey,
         now: i64,
@@ -686,7 +688,7 @@ mod tests {
             false,
             0,
         );
-        verify_rate_attestation(&account, attestor, mint, now)
+        verify_rate_attestation(&account, attestor, mint, now, back)
     }
 
     struct RateCase {
@@ -712,9 +714,19 @@ mod tests {
         }
 
         fn run(&self, instructions: &[Instruction], current: u16) -> Result<RateAttestation> {
+            self.run_back(instructions, current, 2)
+        }
+
+        fn run_back(
+            &self,
+            instructions: &[Instruction],
+            current: u16,
+            back: u16,
+        ) -> Result<RateAttestation> {
             verify_rate(
                 instructions,
                 current,
+                back,
                 &self.limit.attestor,
                 &self.mint,
                 self.limit.now,
@@ -764,6 +776,22 @@ mod tests {
             .run(&[case.signed(), case.limit.signed(), borrow()], 2)
             .unwrap();
         assert_eq!(rate, RateAttestation::parse(&case.message).unwrap());
+    }
+
+    #[test]
+    fn a_rate_right_before_a_sweep_passes() {
+        let case = RateCase::fresh();
+        let rate = case.run_back(&[case.signed(), borrow()], 1, 1).unwrap();
+        assert_eq!(rate, RateAttestation::parse(&case.message).unwrap());
+    }
+
+    #[test]
+    fn a_sweep_first_in_the_transaction_has_no_rate() {
+        let case = RateCase::fresh();
+        expect(
+            case.run_back(&[borrow()], 0, 1),
+            RewardFloatError::AttestationMissing,
+        );
     }
 
     #[test]

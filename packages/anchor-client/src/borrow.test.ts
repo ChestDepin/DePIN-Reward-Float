@@ -14,7 +14,13 @@ import { describe, expect, it } from 'vitest'
 import { decodePool } from './accounts.ts'
 import { AttestationMismatch, borrowInstructions } from './borrow.ts'
 import rawIdl from './idl/reward_float.json' with { type: 'json' }
-import { loanAddress, operatorAccountAddress, poolAddress, rewardFloatProgramId } from './pda.ts'
+import {
+  loanAddress,
+  operatorAccountAddress,
+  poolAddress,
+  rewardFloatProgramId,
+  rewardWatchAddress,
+} from './pda.ts'
 import { coder, encodePool, key, offlineProgram } from './test-support.ts'
 
 const ASSOCIATED_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
@@ -23,7 +29,7 @@ const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ
 const THIS_INSTRUCTION = 0xffff
 // The most loans an operator can hold while still being allowed one more.
 const WORST_CASE_OPEN_LOANS = 3
-const MEASURED_WORST_CASE_BYTES = 1112
+const MEASURED_WORST_CASE_BYTES = 1145
 
 const attestorSecret = new Uint8Array(32).fill(21)
 const attestor = Keypair.fromSeed(attestorSecret).publicKey
@@ -220,6 +226,7 @@ describe('borrow instructions', () => {
         false,
         true,
       ],
+      [rewardWatchAddress(operator, rewardMint).toBase58(), false, true],
       [SYSVAR_INSTRUCTIONS_PUBKEY.toBase58(), false, false],
       [TOKEN_PROGRAM_ID.toBase58(), false, false],
       [SystemProgram.programId.toBase58(), false, false],

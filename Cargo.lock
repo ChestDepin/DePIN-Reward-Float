@@ -2727,6 +2727,7 @@ dependencies = [
  "solana-instructions-sysvar 2.2.2",
  "solana-pubkey 4.2.1",
  "solana-sdk-ids 2.2.1",
+ "solana-svm-log-collector",
 ]
 
 [[package]]

@@ -9,7 +9,7 @@ import {
 } from '@solana/web3.js'
 import type { OnChain, PoolAccount } from './accounts.ts'
 import type { RewardFloat } from './idl/reward-float.ts'
-import { loanAddress, operatorAccountAddress, u64Bytes } from './pda.ts'
+import { loanAddress, operatorAccountAddress, rewardWatchAddress, u64Bytes } from './pda.ts'
 import { createAssociatedTokenAccountIdempotent } from './token.ts'
 
 export type BorrowRequest = {
@@ -104,6 +104,7 @@ export async function borrowInstructions(
       destination,
       rewardMint,
       rewardAccount: utils.token.associatedAddress({ mint: rewardMint, owner: operator }),
+      rewardWatch: rewardWatchAddress(operator, rewardMint),
       instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
       tokenProgram: utils.token.TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,

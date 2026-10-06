@@ -58,4 +58,8 @@ pub mod reward_float {
     pub fn repay(ctx: Context<Repay>, max_amount: u64) -> Result<()> {
         handle_repay(ctx, max_amount)
     }
+
+    pub fn sweep(ctx: Context<Sweep>) -> Result<()> {
+        handle_sweep(ctx)
+    }
 }

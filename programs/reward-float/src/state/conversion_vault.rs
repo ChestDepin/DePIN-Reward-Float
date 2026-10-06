@@ -47,6 +47,16 @@ impl ConversionVault {
             / (RATE_DENOMINATOR * BPS);
         u64::try_from(stable).map_err(|_| error!(RewardFloatError::MathOverflow))
     }
+
+    /// The fewest reward units this vault pays at least `stable` for, at the attested rate:
+    /// the inverse of [`Self::quote`]. Saturates at `u64::MAX`, since it only ever caps what
+    /// a sweep withholds, and no reward account holds more than that.
+    pub fn tokens_for(&self, stable: u64, stable_per_trillion_reward: u64) -> u64 {
+        // Below 2⁶⁴ · 10¹⁶ and 2⁶⁴ · 10⁴, so neither side overflows a u128.
+        let tokens = (u128::from(stable) * RATE_DENOMINATOR * BPS)
+            .div_ceil(u128::from(stable_per_trillion_reward) * (BPS - u128::from(self.spread_bps)));
+        u64::try_from(tokens).unwrap_or(u64::MAX)
+    }
 }
 
 #[cfg(test)]
@@ -123,6 +133,50 @@ mod tests {
             vault(9_999).quote(u64::MAX, 1_000_000_000_000).unwrap(),
             1_844_674_407_370_955
         );
+    }
+
+    #[test]
+    fn it_finds_the_fewest_units_that_pay_a_stablecoin_amount() {
+        // 50 HNT buy exactly $154.535 at a 30 bps spread, and one unit less does not.
+        assert_eq!(
+            vault(30).tokens_for(154_535_000, HNT_AT_3_10),
+            5_000_000_000
+        );
+        assert_eq!(
+            vault(30).tokens_for(2_830_987, HONEY_AT_0_0023),
+            1_234_567_615_892
+        );
+        assert_eq!(vault(0).tokens_for(1, 2_406_662), 415_514);
+    }
+
+    #[test]
+    fn what_it_finds_is_paid_in_full_and_one_unit_less_is_not() {
+        for (stable, rate, spread) in [
+            (2_830_987, HONEY_AT_0_0023, 30),
+            (102_465_753, 2_406_662, 30),
+            (1, HONEY_AT_0_0023, 30),
+            (154_535_001, HNT_AT_3_10, 30),
+        ] {
+            let vault = vault(spread);
+            let tokens = vault.tokens_for(stable, rate);
+            assert!(vault.quote(tokens, rate).unwrap() >= stable);
+            assert!(vault.quote(tokens - 1, rate).unwrap() < stable);
+        }
+    }
+
+    #[test]
+    fn nothing_is_bought_with_no_tokens() {
+        assert_eq!(vault(30).tokens_for(0, HONEY_AT_0_0023), 0);
+    }
+
+    #[test]
+    fn a_unit_worth_more_than_the_amount_is_still_one_unit() {
+        assert_eq!(vault(0).tokens_for(1, 1_000_000_000_000_000), 1);
+    }
+
+    #[test]
+    fn more_units_than_an_account_can_hold_saturate() {
+        assert_eq!(vault(9_999).tokens_for(u64::MAX, 1), u64::MAX);
     }
 
     #[test]

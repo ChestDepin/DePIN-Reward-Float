@@ -12,8 +12,9 @@ use mollusk_svm::result::types::{TransactionProgramResult, TransactionResult};
 use reward_float::error::RewardFloatError;
 use reward_float::instructions::verify_attestation::{LIMIT_ATTESTATION_TAG, RATE_ATTESTATION_TAG};
 use reward_float::{
-    Loan, LoanStatus, OperatorAccount, Pool, LOAN_SEED, MAX_OPEN_LOANS, NONCE_WINDOW_WORDS,
-    OPERATOR_SEED, POOL_SEED, REPAYMENT_PERIOD, SECONDS_PER_YEAR, VAULT_SEED,
+    Loan, LoanStatus, OperatorAccount, Pool, RewardWatch, LOAN_SEED, MAX_OPEN_LOANS,
+    NONCE_WINDOW_WORDS, OPERATOR_SEED, POOL_SEED, REPAYMENT_PERIOD, SECONDS_PER_YEAR, VAULT_SEED,
+    WATCH_SEED,
 };
 use solana_account::Account;
 use solana_instruction::error::InstructionError;
@@ -219,6 +220,7 @@ struct Setup {
     rate_check: bool,
     reward_account: Pubkey,
     reward_account_state: Account,
+    watch_state: Option<RewardWatch>,
     forged: bool,
     now: i64,
     nonce: u64,
@@ -285,6 +287,7 @@ impl Setup {
             rate_check: true,
             reward_account: get_associated_token_address(&operator, &reward_mint),
             reward_account_state: reward_token_account(&reward_mint, &operator, None),
+            watch_state: None,
             forged: false,
             now: NOW,
             nonce: 7,
@@ -297,6 +300,13 @@ impl Setup {
 
     fn operator_account(&self) -> Pubkey {
         Pubkey::find_program_address(&[OPERATOR_SEED, self.signer.as_ref()], &reward_float::ID).0
+    }
+
+    fn watch(&self) -> (Pubkey, u8) {
+        Pubkey::find_program_address(
+            &[WATCH_SEED, self.signer.as_ref(), self.reward_mint.as_ref()],
+            &reward_float::ID,
+        )
     }
 
     fn loan(&self) -> Pubkey {
@@ -355,6 +365,7 @@ impl Setup {
             destination: self.destination,
             reward_mint: self.reward_mint,
             reward_account: self.reward_account,
+            reward_watch: self.watch().0,
             instructions: sysvar::instructions::ID,
             token_program: spl_token::ID,
             system_program: anchor_lang::system_program::ID,
@@ -422,6 +433,13 @@ impl Setup {
             ),
             (m(&self.reward_mint), mint_account()),
             (m(&self.reward_account), self.reward_account_state.clone()),
+            (
+                m(&self.watch().0),
+                match &self.watch_state {
+                    Some(state) => program_account(serialize(state)),
+                    None => Account::default(),
+                },
+            ),
             mollusk_svm_programs_token::token::keyed_account(),
             mollusk_svm::program::keyed_account_for_system_program(),
         ];
@@ -494,6 +512,95 @@ fn the_first_loan_opens_the_operator_account_and_fixes_the_terms() {
         delegation(&result, &setup.reward_account),
         Some((setup.operator_account(), FIRST_ALLOWANCE))
     );
+}
+
+fn with_balance(mut account: Account, amount: u64) -> Account {
+    let mut state = spl_token::state::Account::unpack(&account.data).unwrap();
+    state.amount = amount;
+    spl_token::state::Account::pack(state, &mut account.data).unwrap();
+    account
+}
+
+fn watched(setup: &Setup, balance: u64) -> RewardWatch {
+    RewardWatch {
+        operator: setup.signer,
+        reward_mint: setup.reward_mint,
+        balance,
+        bump: setup.watch().1,
+    }
+}
+
+// Rewards already on the account when the loan goes out are not a payout towards it.
+#[test]
+fn the_first_loan_on_a_token_starts_the_watch_at_the_balance_already_there() {
+    let mut setup = Setup::first_loan();
+    setup.reward_account_state = with_balance(setup.reward_account_state.clone(), 7_000);
+    let result = setup.run();
+    assert_eq!(outcome(&result), Ok(()));
+    let watch: RewardWatch = deserialize(&result, &setup.watch().0);
+    assert_eq!(serialize(&watch), serialize(&watched(&setup, 7_000)));
+}
+
+// A payout that arrived before this loan and is not swept yet still belongs to the open one.
+#[test]
+fn a_later_loan_on_the_same_token_leaves_the_watch_where_it_was() {
+    let mut setup = Setup::first_loan();
+    let mut existing = fresh_operator_account(setup.signer);
+    existing.total_debt = AMOUNT;
+    existing.open_loans = 1;
+    existing.used_nonces[0] = 1 << 7;
+    setup.operator_state = Some(existing);
+    setup.pass_open_loan(&setup.existing_loan(7, AMOUNT));
+    setup.pool_state.total_borrowed = AMOUNT;
+    setup.vault_balance = DEPOSITS - AMOUNT;
+    setup.attestation.nonce = 8;
+    setup.nonce = 8;
+    setup.amount = LIMIT - AMOUNT;
+    setup.max_apr_bps = 1_100;
+    setup.reward_account_state = with_balance(setup.reward_account_state.clone(), 5_000);
+    setup.watch_state = Some(watched(&setup, 1_000));
+    let result = setup.run();
+    assert_eq!(outcome(&result), Ok(()));
+    let watch: RewardWatch = deserialize(&result, &setup.watch().0);
+    assert_eq!(watch.balance, 1_000);
+}
+
+// Loans issued before the program kept a watch have none; the first later loan starts it.
+#[test]
+fn a_loan_beside_open_ones_from_before_the_watch_starts_it_at_the_balance() {
+    let mut setup = Setup::first_loan();
+    let mut existing = fresh_operator_account(setup.signer);
+    existing.total_debt = AMOUNT;
+    existing.open_loans = 1;
+    existing.used_nonces[0] = 1 << 7;
+    setup.operator_state = Some(existing);
+    setup.pass_open_loan(&setup.existing_loan(7, AMOUNT));
+    setup.pool_state.total_borrowed = AMOUNT;
+    setup.vault_balance = DEPOSITS - AMOUNT;
+    setup.attestation.nonce = 8;
+    setup.nonce = 8;
+    setup.amount = LIMIT - AMOUNT;
+    setup.max_apr_bps = 1_100;
+    setup.reward_account_state = with_balance(setup.reward_account_state.clone(), 5_000);
+    let result = setup.run();
+    assert_eq!(outcome(&result), Ok(()));
+    let watch: RewardWatch = deserialize(&result, &setup.watch().0);
+    assert_eq!(serialize(&watch), serialize(&watched(&setup, 5_000)));
+}
+
+// Rewards that came in while nothing was owed on the token are the operator's.
+#[test]
+fn a_watch_left_by_repaid_loans_restarts_at_the_balance() {
+    let mut setup = Setup::first_loan();
+    let mut existing = fresh_operator_account(setup.signer);
+    existing.used_nonces[0] = 1 << 6;
+    setup.operator_state = Some(existing);
+    setup.reward_account_state = with_balance(setup.reward_account_state.clone(), 5_000);
+    setup.watch_state = Some(watched(&setup, 1_000));
+    let result = setup.run();
+    assert_eq!(outcome(&result), Ok(()));
+    let watch: RewardWatch = deserialize(&result, &setup.watch().0);
+    assert_eq!(watch.balance, 5_000);
 }
 
 fn delegation(result: &TransactionResult, key: &Pubkey) -> Option<(Pubkey, u64)> {

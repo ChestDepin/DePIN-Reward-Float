@@ -6,8 +6,8 @@ use solana_sdk_ids::sysvar::instructions::ID as INSTRUCTIONS_ID;
 use crate::error::RewardFloatError;
 use crate::instructions::verify_attestation::{verify_limit_attestation, verify_rate_attestation};
 use crate::state::{
-    Loan, LoanStatus, OperatorAccount, Pool, LOAN_SEED, MAX_OPEN_LOANS, MAX_TERM_PERIODS,
-    OPERATOR_SEED, POOL_SEED, REPAYMENT_PERIOD,
+    Loan, LoanStatus, OperatorAccount, Pool, RewardWatch, LOAN_SEED, MAX_OPEN_LOANS,
+    MAX_TERM_PERIODS, OPERATOR_SEED, POOL_SEED, REPAYMENT_PERIOD, WATCH_SEED,
 };
 
 const BASIS_POINTS: u16 = 10_000;
@@ -63,6 +63,17 @@ pub struct Borrow<'info> {
     )]
     pub reward_account: Box<Account<'info, TokenAccount>>,
 
+    // Opened with the operator's first loan on this token, for the same reason as the
+    // operator account: borrowing stays one transaction.
+    #[account(
+        init_if_needed,
+        payer = operator,
+        space = 8 + RewardWatch::INIT_SPACE,
+        seeds = [WATCH_SEED, operator.key().as_ref(), reward_mint.key().as_ref()],
+        bump,
+    )]
+    pub reward_watch: Box<Account<'info, RewardWatch>>,
+
     /// CHECK: pinned to the instructions sysvar, and only read through its helpers.
     #[account(address = INSTRUCTIONS_ID)]
     pub instructions: UncheckedAccount<'info>,
@@ -109,6 +120,7 @@ pub fn handle_borrow(
         &ctx.accounts.pool.attestor,
         &reward_mint,
         now,
+        2,
     )?;
 
     let pool = &mut ctx.accounts.pool;
@@ -195,6 +207,20 @@ pub fn handle_borrow(
     };
     pool.track(&loan)?;
     loan.try_serialize(&mut &mut ctx.accounts.loan.try_borrow_mut_data()?[..])?;
+
+    // With no other open loan repaid from this token, whatever the account holds now came
+    // in before this loan, or while nothing was owed, and is the operator's. Otherwise the
+    // watch stays put: a payout above it is still owed to the loans already open. Loans
+    // issued before the program kept a watch have none, and it starts here all the same.
+    let unwatched = ctx.accounts.reward_watch.operator == Pubkey::default();
+    if reward_ceiling == 0 || unwatched {
+        ctx.accounts.reward_watch.set_inner(RewardWatch {
+            operator,
+            reward_mint,
+            balance: ctx.accounts.reward_account.amount,
+            bump: ctx.bumps.reward_watch,
+        });
+    }
 
     // FR-014a by construction: the allowance is the debt of every open loan repaid from
     // this token, each at the rate it was actually issued at, converted at the attested

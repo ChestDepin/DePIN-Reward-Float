@@ -37,15 +37,42 @@ pub struct Repay<'info> {
 
 pub fn handle_repay(ctx: Context<Repay>, max_amount: u64) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
-    let loan = &mut ctx.accounts.loan;
-    let pool = &mut ctx.accounts.pool;
+    let paid = settle(
+        &mut ctx.accounts.pool,
+        &mut ctx.accounts.operator_account,
+        &mut ctx.accounts.loan,
+        now,
+        max_amount,
+    )?;
+    token::transfer(
+        CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            Transfer {
+                from: ctx.accounts.source.to_account_info(),
+                to: ctx.accounts.vault.to_account_info(),
+                authority: ctx.accounts.payer.to_account_info(),
+            },
+        ),
+        paid,
+    )
+}
+
+// Books a repayment of at most `max_amount` on the loan, its operator and its pool, and
+// returns what was paid. The caller moves that much stablecoin into the pool vault: repay
+// from the payer, a sweep from the conversion vault.
+pub(crate) fn settle(
+    pool: &mut Pool,
+    account: &mut OperatorAccount,
+    loan: &mut Loan,
+    now: i64,
+    max_amount: u64,
+) -> Result<u64> {
     pool.untrack(loan)?;
     let accrued = loan.accrue(now)?;
     let repayment = loan.apply_repayment(max_amount)?;
     pool.track(loan)?;
     let paid = repayment.total();
 
-    let account = &mut ctx.accounts.operator_account;
     account.total_debt = account
         .total_debt
         .checked_add(accrued)
@@ -72,16 +99,5 @@ pub fn handle_repay(ctx: Context<Repay>, max_amount: u64) -> Result<()> {
         .total_deposits
         .checked_add(repayment.interest)
         .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
-
-    token::transfer(
-        CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
-            Transfer {
-                from: ctx.accounts.source.to_account_info(),
-                to: ctx.accounts.vault.to_account_info(),
-                authority: ctx.accounts.payer.to_account_info(),
-            },
-        ),
-        paid,
-    )
+    Ok(paid)
 }

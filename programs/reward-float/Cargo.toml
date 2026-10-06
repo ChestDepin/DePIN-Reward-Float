@@ -52,3 +52,6 @@ solana-pubkey = "4.2"
 # shortest one that still breaks them. Without default features it pulls no fork or
 # timeout machinery, and the lock gains three new crates and moves no pinned one.
 proptest = { version = "1", default-features = false, features = ["std"] }
+# Collects the program's logs in the sweep tests, where its events are the only record of a
+# skipped withholding (FR-015a). The version mollusk itself runs on, already in the lock.
+solana-svm-log-collector = { version = "4.2.0", features = ["agave-unstable-api"] }

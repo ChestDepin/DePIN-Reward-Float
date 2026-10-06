@@ -10,6 +10,7 @@ import {
   operatorAccountAddress,
   poolAddress,
   rewardFloatProgramId,
+  rewardWatchAddress,
   vaultAddress,
 } from './pda.ts'
 import { key, offlineProgram } from './test-support.ts'
@@ -52,6 +53,15 @@ describe('program addresses', () => {
       true,
     )
     expect(loanAddress(operator, nonce).equals(resolved.loan as PublicKey)).toBe(true)
+    expect(rewardWatchAddress(operator, key(9)).equals(resolved.rewardWatch as PublicKey)).toBe(
+      true,
+    )
+  })
+
+  it('gives each operator and reward token a watch of its own', () => {
+    const watch = rewardWatchAddress(key(5), key(9))
+    expect(watch.equals(rewardWatchAddress(key(5), key(10)))).toBe(false)
+    expect(watch.equals(rewardWatchAddress(key(4), key(9)))).toBe(false)
   })
 
   it('derives a lender share as deposit does, one per pool and lender', async () => {

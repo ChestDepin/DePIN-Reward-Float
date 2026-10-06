@@ -23,7 +23,7 @@ use reward_float::error::RewardFloatError;
 use reward_float::instructions::verify_attestation::{LIMIT_ATTESTATION_TAG, RATE_ATTESTATION_TAG};
 use reward_float::{
     LenderShare, Loan, OperatorAccount, Pool, LOAN_SEED, MAX_OPEN_LOANS, MAX_TERM_PERIODS,
-    OPERATOR_SEED, POOL_SEED, SECONDS_PER_YEAR, SHARE_SEED, VAULT_SEED,
+    OPERATOR_SEED, POOL_SEED, SECONDS_PER_YEAR, SHARE_SEED, VAULT_SEED, WATCH_SEED,
 };
 use solana_account::Account;
 use solana_instruction::error::InstructionError;
@@ -830,6 +830,11 @@ impl World {
                 destination: who.destination,
                 reward_mint: self.reward_mint,
                 reward_account: who.reward_account,
+                reward_watch: Pubkey::find_program_address(
+                    &[WATCH_SEED, who.key.as_ref(), self.reward_mint.as_ref()],
+                    &reward_float::ID,
+                )
+                .0,
                 instructions: sysvar::instructions::ID,
                 token_program: spl_token::ID,
                 system_program: anchor_lang::system_program::ID,

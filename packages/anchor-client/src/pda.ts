@@ -40,6 +40,10 @@ export function loanAddress(operator: PublicKey, nonce: bigint): PublicKey {
   return derive([seed('loan'), operator.toBuffer(), u64Bytes(nonce)])
 }
 
+export function rewardWatchAddress(operator: PublicKey, rewardMint: PublicKey): PublicKey {
+  return derive([seed('watch'), operator.toBuffer(), rewardMint.toBuffer()])
+}
+
 export function conversionVaultAddress(pool: PublicKey, rewardMint: PublicKey): PublicKey {
   return derive([seed('conv'), pool.toBuffer(), rewardMint.toBuffer()])
 }

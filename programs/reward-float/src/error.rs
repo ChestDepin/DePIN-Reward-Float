@@ -17,7 +17,7 @@ pub enum RewardFloatError {
     #[msg("the attestor key cannot be the all-zero key")]
     InvalidAttestor,
     #[msg(
-        "borrow must come right after the ed25519 checks of the rate and then the limit attestation"
+        "borrow must come right after the ed25519 checks of the rate and then the limit attestation, and sweep right after that of the rate"
     )]
     AttestationMissing,
     #[msg("an attestation or its ed25519 check is not laid out as expected")]
