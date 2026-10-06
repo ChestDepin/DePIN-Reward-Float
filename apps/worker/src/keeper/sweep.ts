@@ -270,7 +270,7 @@ export function createKeeper(deps: KeeperDeps): Keeper {
 // The next tick is scheduled only after the last one ends, so two never overlap on the
 // same watch and send it twice.
 export function runKeeper(
-  keeper: Pick<Keeper, 'tick'>,
+  keeper: { tick(): Promise<unknown> },
   options: { intervalMs: number; logger: Logger },
 ): { stop(): void } {
   let stopped = false

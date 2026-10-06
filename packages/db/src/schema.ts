@@ -5,6 +5,7 @@ import {
   check,
   date,
   index,
+  integer,
   jsonb,
   numeric,
   pgEnum,
@@ -149,3 +150,44 @@ export const indexerCursors = pgTable(
   },
   (table) => [primaryKey({ columns: [table.wallet, table.tokenAccount] })],
 )
+
+export const sweepEventKindEnum = pgEnum('sweep_event_kind', ['swept', 'skipped'])
+
+// Devnet: the journal of FR-016, read from the program's Swept and SweepSkipped events.
+// The chain stays the truth; the table is its index, as `payouts` is for mainnet.
+export const sweepEvents = pgTable(
+  'sweep_events',
+  {
+    signature: text('signature').notNull(),
+    eventIndex: smallint('event_index').notNull(),
+    kind: sweepEventKindEnum('kind').notNull(),
+    operator: address('operator').notNull(),
+    rewardMint: address('reward_mint').notNull(),
+    loan: address('loan'),
+    // Swept: what was withheld. SweepSkipped: what would have been.
+    withheld: baseUnits('withheld').notNull(),
+    paid: baseUnits('paid'),
+    stablePerTrillionReward: baseUnits('stable_per_trillion_reward').notNull(),
+    deviationBps: integer('deviation_bps').notNull(),
+    maxSlippageBps: integer('max_slippage_bps'),
+    remainingDebt: baseUnits('remaining_debt'),
+    slot: bigint('slot', { mode: 'bigint' }).notNull(),
+    blockTime: moment('block_time').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.signature, table.eventIndex] }),
+    index('sweep_events_operator_slot_idx').on(table.operator, table.slot),
+    check(
+      'sweep_events_fields_match_kind',
+      sql`(${table.kind} = 'swept') = (${table.loan} is not null and ${table.paid} is not null and ${table.remainingDebt} is not null and ${table.maxSlippageBps} is null)
+        and (${table.kind} = 'skipped') = (${table.loan} is null and ${table.paid} is null and ${table.remainingDebt} is null and ${table.maxSlippageBps} is not null)`,
+    ),
+  ],
+)
+
+export const sweepJournalCursors = pgTable('sweep_journal_cursors', {
+  program: address('program').primaryKey(),
+  lastSignature: text('last_signature').notNull(),
+  lastSlot: bigint('last_slot', { mode: 'bigint' }).notNull(),
+  updatedAt: moment('updated_at').notNull().defaultNow(),
+})

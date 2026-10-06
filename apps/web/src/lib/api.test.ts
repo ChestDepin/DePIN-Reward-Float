@@ -189,6 +189,20 @@ describe('createApiClient', () => {
     expect(result).toEqual({ ok: true, value: attestation })
   })
 
+  it('asks for the withholdings of the address it was given', async () => {
+    const journal = { operator: WALLET, entries: [], complete: true }
+    const calls: [string, string | undefined][] = []
+    const client = clientOver(async (input, init) => {
+      calls.push([String(input), init?.method])
+      return answered(200, journal)
+    })
+
+    const result = await client.withholdings(WALLET)
+
+    expect(calls).toEqual([[`https://api.example.com/v1/operators/${WALLET}/withholdings`, 'GET']])
+    expect(result).toEqual({ ok: true, value: journal })
+  })
+
   it('reads an api without rates as data that is unavailable', async () => {
     const client = clientOver(async () =>
       answered(503, { error: { code: 'DATA_UNAVAILABLE', message: 'rates are not set up' } }),

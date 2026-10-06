@@ -1,7 +1,7 @@
 import { createDatabase } from '@drf/db'
 import { createLogger } from '@drf/shared/log'
 import { SUPPORTED_NETWORKS } from '@drf/shared/schemas'
-import { startDevnetKeeper } from '@drf/worker/keeper'
+import { startDevnetKeeper, startSweepJournal } from '@drf/worker/keeper'
 import { serve } from '@hono/node-server'
 import { createApp } from './app.ts'
 import { loadApiConfig, type RateConfig } from './config.ts'
@@ -81,6 +81,15 @@ const keeper =
         logger: logger.child({ component: 'keeper' }),
       })
 
+const sweepJournal =
+  config.sweepJournal === null
+    ? null
+    : startSweepJournal({
+        rpcUrl: config.sweepJournal.devnetRpcUrl,
+        db,
+        logger: logger.child({ component: 'sweep-journal' }),
+      })
+
 const server = serve({ fetch: app.fetch, port: config.port }, (address) => {
   logger.info({ port: address.port }, 'api listening')
 })
@@ -98,6 +107,7 @@ const shutdown = createShutdown({
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     keeper?.stop()
+    sweepJournal?.stop()
     shutdown(signal).then((code) => process.exit(code))
   })
 }

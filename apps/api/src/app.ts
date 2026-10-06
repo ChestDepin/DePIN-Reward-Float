@@ -4,6 +4,7 @@ import type { Logger } from 'pino'
 import { type Attestor, createDbAttestationJournal } from './routes/attestations.ts'
 import { createDbPayoutActivitySource } from './routes/health.ts'
 import { createDbCreditProfileStore } from './routes/limit.ts'
+import { createDbWithholdingSource } from './routes/loans.ts'
 import { createDbPayoutHistorySource } from './routes/operators.ts'
 import type { RateSource } from './routes/rate.ts'
 import { createServer } from './server.ts'
@@ -28,6 +29,7 @@ export function createApp({ db, logger, attestor, rates, webOrigins, now }: AppD
     profiles: createDbCreditProfileStore(db),
     activity: createDbPayoutActivitySource(db),
     journal: createDbAttestationJournal(db),
+    withholdings: createDbWithholdingSource(db),
     attestor,
     rates,
     webOrigins,

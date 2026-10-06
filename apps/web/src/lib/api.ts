@@ -7,6 +7,8 @@ import {
   issuedRateAttestationSchema,
   type PayoutHistory,
   payoutHistorySchema,
+  type Withholdings,
+  withholdingsSchema,
 } from '@drf/shared/api'
 import type { SolanaAddress } from '@drf/shared/schemas'
 import { useEffect, useState } from 'react'
@@ -70,6 +72,7 @@ export type ApiClient = {
   refreshCreditLimit(address: SolanaAddress): Promise<ApiResult<CreditLimit>>
   issueLimitAttestation(address: SolanaAddress): Promise<ApiResult<IssuedAttestation>>
   issueRateAttestation(rewardMint: SolanaAddress): Promise<ApiResult<IssuedRateAttestation>>
+  withholdings(address: SolanaAddress): Promise<ApiResult<Withholdings>>
 }
 
 export type ApiClientOptions = {
@@ -123,6 +126,8 @@ export function createApiClient({
       call(issuedAttestationSchema, `/v1/operators/${address}/attestations/limit`, 'POST'),
     issueRateAttestation: (rewardMint) =>
       call(issuedRateAttestationSchema, '/v1/attestations/rate', 'POST', { rewardMint }),
+    withholdings: (address) =>
+      call(withholdingsSchema, `/v1/operators/${address}/withholdings`, 'GET'),
   }
 }
 

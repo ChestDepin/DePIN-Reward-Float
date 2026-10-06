@@ -85,8 +85,19 @@ describe('migrations', () => {
         { idx: 5, tag: '0005_drop_cursor_network' },
         { idx: 6, tag: '0006_limit_per_network' },
         { idx: 7, tag: '0007_stored_profile_states' },
+        { idx: 8, tag: '0008_sweep_journal' },
       ],
     })
+  })
+
+  it('adds the sweep journal with the constraint that ties its fields to the kind', () => {
+    const journal = readFileSync(path.join(MIGRATIONS_FOLDER, '0008_sweep_journal.sql'), 'utf8')
+
+    expect(journal).toContain('CREATE TABLE "sweep_events"')
+    expect(journal).toContain('CREATE TABLE "sweep_journal_cursors"')
+    expect(journal).toContain('PRIMARY KEY("signature","event_index")')
+    expect(journal).toContain('sweep_events_fields_match_kind')
+    expect(journal).toContain('sweep_events_operator_slot_idx')
   })
 
   // Джерело виплати не перейменоване, а перестворене: колонки міняють і тип, і

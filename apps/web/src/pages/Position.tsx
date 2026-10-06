@@ -13,6 +13,7 @@ import {
   revokeInstruction,
   rewardFloatProgram,
 } from '@drf/anchor-client'
+import type { WithholdingEntry } from '@drf/shared/api'
 import {
   allocateRepayment,
   loanPosition,
@@ -20,7 +21,7 @@ import {
   operatorPosition,
   repayAllAmount,
 } from '@drf/shared/loan'
-import { SUPPORTED_NETWORKS, solanaAddressSchema } from '@drf/shared/schemas'
+import { type SolanaAddress, SUPPORTED_NETWORKS, solanaAddressSchema } from '@drf/shared/schemas'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import {
   type Connection,
@@ -28,13 +29,13 @@ import {
   Transaction,
   type TransactionInstruction,
 } from '@solana/web3.js'
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Empty } from '../components/Answer'
-import { api } from '../lib/api'
+import { type ApiFailure, api, useResource } from '../lib/api'
 import { type BorrowFailure, describeBorrowFailure, parseStableAmount } from '../lib/borrow'
 import { chainConfig } from '../lib/chain'
-import { formatCost, formatTokens } from '../lib/format'
+import { formatBps, formatCost, formatRate, formatTokens, formatUsd } from '../lib/format'
 import { delegationAfterRepayment, type RepaymentDelegation } from '../lib/mandate'
 import { useAddressParam, useOperatorIdentity } from '../lib/wallet'
 
@@ -166,6 +167,7 @@ const Position = () => {
           )}
         </>
       )}
+      {address !== null && <Journal address={address} />}
     </div>
   )
 }
@@ -269,6 +271,141 @@ function rewardToken(mint: PublicKey): { symbol: string; decimals: number } | nu
     if (configured.equals(mint)) return SUPPORTED_NETWORKS.get(networkId)?.token ?? null
   }
   return null
+}
+
+function minute(iso: string): string {
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)}`
+}
+
+function tokensText(baseUnits: string, mint: SolanaAddress): string {
+  const token = rewardToken(new PublicKey(mint))
+  return token === null
+    ? `${baseUnits} base units`
+    : `${formatTokens(baseUnits, token.decimals)} ${token.symbol}`
+}
+
+function rateText(entry: WithholdingEntry): string {
+  const token = rewardToken(new PublicKey(entry.rewardMint))
+  return token === null
+    ? `${entry.stablePerTrillionReward} per 10^12 base units`
+    : formatRate(entry.stablePerTrillionReward, token.decimals)
+}
+
+function journalFailureText(failure: ApiFailure): string {
+  if (failure.kind === 'data-unavailable') return 'The api could not read the withholdings.'
+  if (failure.kind === 'unreachable') return 'The api could not be reached.'
+  return 'The api answered something this page cannot read.'
+}
+
+const Explorer = ({ signature, children }: { signature: string; children: string }) => (
+  <a
+    href={`https://explorer.solana.com/tx/${signature}?cluster=devnet`}
+    className="underline underline-offset-4"
+    target="_blank"
+    rel="noreferrer"
+  >
+    {children}
+  </a>
+)
+
+// FR-016: read from the api, not from the open loans above, so a withholding that closed
+// its loan stays in the journal.
+const Journal = ({ address }: { address: SolanaAddress }) => {
+  const load = useCallback(() => api.withholdings(address), [address])
+  const journal = useResource(load)
+  const cell = 'whitespace-nowrap py-2 pl-5 text-right'
+
+  return (
+    <>
+      <h2 className="mt-12 text-[11px] sm:text-[12px] tracking-[0.14em] text-dim">WITHHOLDINGS</h2>
+      {journal.status === 'loading' && (
+        <p className="mt-3 text-[12px] text-dim">reading the withholdings…</p>
+      )}
+      {journal.status === 'done' && !journal.result.ok && (
+        <p className="mt-3 text-[12px] text-amber">{journalFailureText(journal.result.failure)}</p>
+      )}
+      {journal.status === 'done' &&
+        journal.result.ok &&
+        journal.result.value.entries.length === 0 && (
+          <p className="mt-3 text-[12px] text-dim">
+            Nothing has been withheld from your rewards yet.
+          </p>
+        )}
+      {journal.status === 'done' &&
+        journal.result.ok &&
+        journal.result.value.entries.length > 0 && (
+          <>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full border-t border-rule text-[12px] sm:text-[13px] tnum">
+                <thead className="text-dim">
+                  <tr className="border-b border-rule">
+                    <th className="whitespace-nowrap py-2 text-left font-normal">when, UTC</th>
+                    <th className={`${cell} font-normal`}>withheld</th>
+                    <th className={`${cell} font-normal`}>rate, $ per token</th>
+                    <th className={`${cell} font-normal`}>deviation</th>
+                    <th className={`${cell} font-normal`}>repaid</th>
+                    <th className={`${cell} font-normal`}>loan left</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {journal.result.value.entries.map((entry) =>
+                    entry.kind === 'withheld' ? (
+                      <tr key={`${entry.signature}:${entry.loan}`} className="border-b border-rule">
+                        <td className="whitespace-nowrap py-2">
+                          <Explorer signature={entry.signature}>{minute(entry.blockTime)}</Explorer>
+                        </td>
+                        <td className={cell}>{tokensText(entry.withheld, entry.rewardMint)}</td>
+                        <td className={cell}>{rateText(entry)}</td>
+                        <td className={cell}>{formatBps(entry.deviationBps)}</td>
+                        <td className={cell}>{formatUsd(entry.paid)}</td>
+                        <td className={cell}>
+                          {entry.remainingDebt === '0'
+                            ? 'repaid'
+                            : formatCost(BigInt(entry.remainingDebt))}
+                        </td>
+                      </tr>
+                    ) : (
+                      <Fragment key={entry.signature}>
+                        <tr className="text-amber">
+                          <td className="whitespace-nowrap py-2">
+                            <Explorer signature={entry.signature}>{minute(entry.lastAt)}</Explorer>
+                          </td>
+                          <td className={cell}>—</td>
+                          <td className={cell}>{rateText(entry)}</td>
+                          <td className={cell}>{formatBps(entry.deviationBps)}</td>
+                          <td className={cell}>—</td>
+                          <td className={cell}>—</td>
+                        </tr>
+                        <tr className="border-b border-rule text-amber">
+                          <td
+                            colSpan={6}
+                            className="pb-2 text-[11px] sm:text-[12px] leading-relaxed"
+                          >
+                            Over the {formatBps(entry.maxSlippageBps)} the pool allows, so the{' '}
+                            {tokensText(entry.attempted, entry.rewardMint)} due were not withheld.
+                            {entry.attempts > 1 &&
+                              ` ${entry.attempts} tries since ${minute(entry.firstAt)}, the worst at ${formatBps(entry.worstDeviationBps)}.`}
+                          </td>
+                        </tr>
+                      </Fragment>
+                    ),
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {!journal.result.value.complete && (
+              <p className="mt-3 text-[12px] text-dim">Older entries are not shown.</p>
+            )}
+            <p className="mt-6 max-w-[60ch] text-[11px] sm:text-[12px] leading-relaxed text-dim">
+              A withholding sells part of a reward at the attested rate and repays the loan with
+              what the sale brought. The deviation is how much less the sale brought than the rate
+              promised. When it is more than the pool allows, nothing is withheld, the reward stays
+              in your wallet, and the next sweep tries again.
+            </p>
+          </>
+        )}
+    </>
+  )
 }
 
 type Moved = Exclude<RepaymentDelegation, { kind: 'keep' }>

@@ -25,6 +25,7 @@ describe('parseApiConfig', () => {
       webOrigins: ['https://app.example.com'],
       rates: null,
       keeper: null,
+      sweepJournal: null,
     })
   })
 
@@ -151,6 +152,22 @@ describe('parseApiConfig: rates', () => {
       expect(String(error)).not.toContain('live-key')
       expect(String(error)).toContain('MAINNET_RPC_URL')
     }
+  })
+})
+
+describe('parseApiConfig: sweep journal', () => {
+  const DEVNET_RPC_URL = 'https://devnet.helius-rpc.com/?api-key=live-key'
+
+  // The journal only reads the chain: it needs no key and no rates, and a sweep sent by
+  // anyone, keeper or not, belongs in it.
+  it('reads devnet whenever the devnet RPC is set, with or without a keeper', () => {
+    expect(parseApiConfig({ ...validEnv, DEVNET_RPC_URL }).sweepJournal).toEqual({
+      devnetRpcUrl: DEVNET_RPC_URL,
+    })
+  })
+
+  it('runs no journal without the devnet RPC', () => {
+    expect(parseApiConfig({ ...validEnv, DEVNET_RPC_URL: '' }).sweepJournal).toBeNull()
   })
 })
 

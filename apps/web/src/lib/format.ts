@@ -68,3 +68,23 @@ export function roundRowsToCents(rows: readonly bigint[]): bigint[] {
   }
   return cents
 }
+
+// The signed rate is stablecoin base units (10^-6 USD) per 10^12 reward base units, so
+// per whole token it is rate · 10^decimals in 10^-18 USD.
+const RATE_DECIMALS = 18
+const RATE_FRACTION = 6
+
+export function formatRate(stablePerTrillionReward: string, decimals: number): string {
+  if (!wholeNumber.test(stablePerTrillionReward)) {
+    throw new Error(`not a whole number: ${stablePerTrillionReward}`)
+  }
+  const perToken = (BigInt(stablePerTrillionReward) * 10n ** BigInt(decimals)).toString()
+  const { whole, fraction } = split(perToken, RATE_DECIMALS)
+  const shown = fraction.slice(0, RATE_FRACTION)
+  if (whole === '0' && /^0+$/.test(shown) && /[1-9]/.test(fraction)) return '< $0.000001'
+  return `$${group(whole)}.${shown.replace(/0+$/, '').padEnd(USD_FRACTION, '0')}`
+}
+
+export function formatBps(bps: number): string {
+  return `${(bps / 100).toFixed(2)}%`
+}

@@ -38,6 +38,7 @@ const deps = (logger: ReturnType<typeof createLogger>) => ({
   profiles: NO_PROFILES,
   activity: NO_ACTIVITY,
   journal: NO_JOURNAL,
+  withholdings: { read: async () => [] },
   attestor: ATTESTOR,
   rates: null,
   webOrigins: ['http://localhost:5173'],

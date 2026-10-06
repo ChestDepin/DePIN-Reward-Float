@@ -9,6 +9,7 @@ import {
 import { DataUnavailable, errorBody } from './routes/errors.ts'
 import { createHealthRoutes, type PayoutActivitySource } from './routes/health.ts'
 import { type CreditProfileStore, createLimitRoutes } from './routes/limit.ts'
+import { createLoanRoutes, type WithholdingSource } from './routes/loans.ts'
 import { createOperatorRoutes, type PayoutHistorySource } from './routes/operators.ts'
 import { createRateRoutes, type RateSource } from './routes/rate.ts'
 
@@ -18,6 +19,7 @@ export type ServerDeps = {
   profiles: CreditProfileStore
   activity: PayoutActivitySource
   journal: AttestationJournal
+  withholdings: WithholdingSource
   attestor: Attestor
   // null: the api runs without rates, and the rate endpoint says so.
   rates: RateSource | null
@@ -33,6 +35,7 @@ export function createServer({
   profiles,
   activity,
   journal,
+  withholdings,
   attestor,
   rates,
   webOrigins,
@@ -50,6 +53,7 @@ export function createServer({
   app.route('/v1', createLimitRoutes({ payouts, profiles, now }))
   app.route('/v1', createAttestationRoutes({ payouts, profiles, journal, attestor, now }))
   app.route('/v1', createRateRoutes({ rates, attestor, now }))
+  app.route('/v1', createLoanRoutes({ withholdings }))
 
   app.notFound((c) => c.json(errorBody('NOT_FOUND', 'route not found'), 404))
 

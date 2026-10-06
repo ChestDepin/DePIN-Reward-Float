@@ -9,9 +9,20 @@ import {
   networks,
   payouts,
   pricePoints,
+  sweepEvents,
+  sweepJournalCursors,
 } from './schema.ts'
 
-const TABLES = [networks, payouts, pricePoints, creditProfiles, attestations, indexerCursors]
+const TABLES = [
+  networks,
+  payouts,
+  pricePoints,
+  creditProfiles,
+  attestations,
+  indexerCursors,
+  sweepEvents,
+  sweepJournalCursors,
+]
 
 function primaryKeyOf(table: PgTable): string[] {
   const config = getTableConfig(table)
@@ -30,7 +41,7 @@ function columnOf(table: PgTable, name: string) {
 }
 
 describe('schema', () => {
-  it('declares the six tables the offchain side needs, and no others', () => {
+  it('declares the eight tables the offchain side needs, and no others', () => {
     expect(TABLES.map((table) => getTableConfig(table).name)).toEqual([
       'networks',
       'payouts',
@@ -38,6 +49,8 @@ describe('schema', () => {
       'credit_profiles',
       'attestations',
       'indexer_cursors',
+      'sweep_events',
+      'sweep_journal_cursors',
     ])
   })
 
@@ -160,5 +173,52 @@ describe('indexer_cursors', () => {
   it('has no row without the signature it stopped at', () => {
     expect(columnOf(indexerCursors, 'last_signature').notNull).toBe(true)
     expect(columnOf(indexerCursors, 'last_slot').notNull).toBe(true)
+  })
+})
+
+describe('sweep_events', () => {
+  // One transaction emits one Swept per loan it paid, so the signature alone repeats.
+  it('is keyed by signature and the event index, so a repeated pass writes the same rows', () => {
+    expect(primaryKeyOf(sweepEvents)).toEqual(['signature', 'event_index'])
+  })
+
+  it('tells a withholding from a skip', () => {
+    expect(columnOf(sweepEvents, 'kind').enumValues).toEqual(['swept', 'skipped'])
+  })
+
+  it('holds amounts and the rate in base units, never as a number', () => {
+    for (const name of ['withheld', 'paid', 'stable_per_trillion_reward', 'remaining_debt']) {
+      expect(columnOf(sweepEvents, name).getSQLType()).toBe('numeric(20, 0)')
+    }
+  })
+
+  it('carries a loan, a payment and a debt only for a withholding, a tolerance only for a skip', () => {
+    for (const name of ['loan', 'paid', 'remaining_debt', 'max_slippage_bps']) {
+      expect(columnOf(sweepEvents, name).notNull).toBe(false)
+    }
+    expect(getTableConfig(sweepEvents).checks.map((constraint) => constraint.name)).toEqual([
+      'sweep_events_fields_match_kind',
+    ])
+  })
+
+  it('indexes the journal the way it is read: by operator, newest slot first', () => {
+    const indexed = getTableConfig(sweepEvents).indexes.map((index) =>
+      index.config.columns.map((column) => ('name' in column ? column.name : '')),
+    )
+
+    expect(indexed).toContainEqual(['operator', 'slot'])
+  })
+})
+
+describe('sweep_journal_cursors', () => {
+  // The journal walks the program's signatures, not an operator's: a sweep may be sent
+  // by anyone, and the program is the one address every sweep names.
+  it('is one cursor per program', () => {
+    expect(primaryKeyOf(sweepJournalCursors)).toEqual(['program'])
+  })
+
+  it('has no row without the signature it stopped at', () => {
+    expect(columnOf(sweepJournalCursors, 'last_signature').notNull).toBe(true)
+    expect(columnOf(sweepJournalCursors, 'last_slot').notNull).toBe(true)
   })
 })

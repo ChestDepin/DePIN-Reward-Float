@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { formatCents, formatCost, formatTokens, formatUsd, roundRowsToCents } from './format'
+import {
+  formatBps,
+  formatCents,
+  formatCost,
+  formatRate,
+  formatTokens,
+  formatUsd,
+  roundRowsToCents,
+} from './format'
 
 describe('formatUsd', () => {
   it('reads micro-dollars, the unit the api answers in', () => {
@@ -104,5 +112,33 @@ describe('formatCents', () => {
     expect(formatCents(20_000n)).toBe('$200.00')
     expect(formatCents(1_234_567n)).toBe('$12,345.67')
     expect(formatCents(5n)).toBe('$0.05')
+  })
+})
+
+describe('formatRate', () => {
+  // 2 406 662 stablecoin base units per 10^12 HONEY base units: $0.002406662 a HONEY.
+  it('reads the signed rate as dollars per whole token', () => {
+    expect(formatRate('2406662', 9)).toBe('$0.002406')
+  })
+
+  it('keeps two decimals for a token worth dollars', () => {
+    expect(formatRate('25000000000', 8)).toBe('$2.50')
+    expect(formatRate('25123400000', 8)).toBe('$2.51234')
+  })
+
+  it('does not show a rate too small for the six decimals as no rate at all', () => {
+    expect(formatRate('1', 9)).toBe('< $0.000001')
+  })
+
+  it('refuses a rate that is not a whole number', () => {
+    expect(() => formatRate('2.4', 9)).toThrow()
+  })
+})
+
+describe('formatBps', () => {
+  it('reads basis points as a percentage', () => {
+    expect(formatBps(31)).toBe('0.31%')
+    expect(formatBps(100)).toBe('1.00%')
+    expect(formatBps(0)).toBe('0.00%')
   })
 })

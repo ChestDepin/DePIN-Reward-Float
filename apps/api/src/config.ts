@@ -101,6 +101,10 @@ export type KeeperConfig = {
   stableMint: SolanaAddress
 }
 
+export type SweepJournalConfig = {
+  devnetRpcUrl: string
+}
+
 export type ApiConfig = {
   databaseUrl: string
   attestorSecretKey: string
@@ -110,6 +114,7 @@ export type ApiConfig = {
   logLevel: z.infer<typeof apiEnvSchema>['LOG_LEVEL']
   rates: RateConfig | null
   keeper: KeeperConfig | null
+  sweepJournal: SweepJournalConfig | null
 }
 
 export function parseApiConfig(env: unknown): ApiConfig {
@@ -133,6 +138,10 @@ export function parseApiConfig(env: unknown): ApiConfig {
     logLevel: parsed.data.LOG_LEVEL,
     rates: rateConfig(parsed.data),
     keeper: keeperConfig(parsed.data),
+    sweepJournal:
+      parsed.data.DEVNET_RPC_URL === undefined
+        ? null
+        : { devnetRpcUrl: parsed.data.DEVNET_RPC_URL },
   }
 }
 
