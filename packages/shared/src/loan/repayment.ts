@@ -64,3 +64,23 @@ export function allocateRepayment(
   }
   return { ok: true, perLoan }
 }
+
+// Loan::accrue and Loan::apply_repayment, without writing anything back; null once the
+// loan is repaid.
+export function applyRepayment(loan: LoanState, maxAmount: bigint, at: bigint): LoanState | null {
+  if (maxAmount === 0n) return loan
+  const accrued = accrueTo(loan, at)
+  const accruedInterest = accrued.accruedInterest
+  const owed = loan.outstanding + accruedInterest
+  const paid = maxAmount < owed ? maxAmount : owed
+  const interest = paid < accruedInterest ? paid : accruedInterest
+  const outstanding = loan.outstanding - (paid - interest)
+  if (outstanding === 0n && accruedInterest === interest) return null
+  return {
+    ...loan,
+    outstanding,
+    accruedInterest: accruedInterest - interest,
+    interestRemainder: accrued.interestRemainder,
+    lastAccrualAt: at > loan.lastAccrualAt ? at : loan.lastAccrualAt,
+  }
+}

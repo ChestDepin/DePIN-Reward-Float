@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { REPAYMENT_PERIOD_SECONDS } from './cost.ts'
 import { accrueTo, type LoanState, loanPosition, operatorPosition } from './position.ts'
-import { allocateRepayment, REPAY_ALL_MARGIN_SECONDS, repayAllAmount } from './repayment.ts'
+import {
+  allocateRepayment,
+  applyRepayment,
+  REPAY_ALL_MARGIN_SECONDS,
+  repayAllAmount,
+} from './repayment.ts'
 
 const T0 = 1_700_000_000n
 const PERIOD = REPAYMENT_PERIOD_SECONDS
@@ -129,5 +134,35 @@ describe('repayAllAmount', () => {
       ok: true,
       perLoan: loans.map((state) => owedAfterMargin(state, now)),
     })
+  })
+})
+
+describe('applyRepayment', () => {
+  it('books the interest up to the moment, then pays it before principal', () => {
+    expect(applyRepayment(loan(), 5_000_000n, T0 + PERIOD)).toEqual(
+      loan({
+        outstanding: 297_465_753n,
+        interestRemainder: 133_920_000_000n,
+        lastAccrualAt: T0 + PERIOD,
+      }),
+    )
+  })
+
+  it('leaves the principal whole when the amount does not cover the interest', () => {
+    expect(applyRepayment(loan(), 1_000_000n, T0 + PERIOD)).toEqual(
+      loan({
+        accruedInterest: 1_465_753n,
+        interestRemainder: 133_920_000_000n,
+        lastAccrualAt: T0 + PERIOD,
+      }),
+    )
+  })
+
+  it('is no loan at all once the amount covers everything owed', () => {
+    expect(applyRepayment(loan(), 400_000_000n, T0 + PERIOD)).toBeNull()
+  })
+
+  it('leaves a loan given nothing as it was', () => {
+    expect(applyRepayment(loan(), 0n, T0 + PERIOD)).toEqual(loan())
   })
 })

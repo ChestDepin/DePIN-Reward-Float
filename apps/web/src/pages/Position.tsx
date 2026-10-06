@@ -1,11 +1,16 @@
 import {
+  approveInstruction,
   fetchOpenLoans,
   fetchPool,
+  fetchRewardAccount,
   fetchStableBalance,
   type LoanAccount,
   type OnChain,
+  operatorAccountAddress,
   type PoolAccount,
+  type RewardAccount,
   repayInstruction,
+  revokeInstruction,
   rewardFloatProgram,
 } from '@drf/anchor-client'
 import {
@@ -15,13 +20,22 @@ import {
   operatorPosition,
   repayAllAmount,
 } from '@drf/shared/loan'
+import { SUPPORTED_NETWORKS, solanaAddressSchema } from '@drf/shared/schemas'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
-import { PublicKey, Transaction } from '@solana/web3.js'
+import {
+  type Connection,
+  PublicKey,
+  Transaction,
+  type TransactionInstruction,
+} from '@solana/web3.js'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Empty } from '../components/Answer'
+import { api } from '../lib/api'
 import { type BorrowFailure, describeBorrowFailure, parseStableAmount } from '../lib/borrow'
-import { formatCost } from '../lib/format'
+import { chainConfig } from '../lib/chain'
+import { formatCost, formatTokens } from '../lib/format'
+import { delegationAfterRepayment, type RepaymentDelegation } from '../lib/mandate'
 import { useAddressParam, useOperatorIdentity } from '../lib/wallet'
 
 type Loans =
@@ -213,10 +227,59 @@ const Open = ({ loans, now }: { loans: OnChain<LoanAccount>[]; now: bigint }) =>
   )
 }
 
+// rate: null when the api has none, or when the account holds no permission of ours to
+// move and so none was asked for.
+type Reward = { mint: PublicKey; account: RewardAccount; rate: bigint | null }
+
 type RepayChain =
   | { status: 'loading' }
   | { status: 'unreachable'; message: string }
-  | { status: 'ready'; pools: Map<string, OnChain<PoolAccount>>; balance: bigint }
+  | {
+      status: 'ready'
+      pools: Map<string, OnChain<PoolAccount>>
+      balance: bigint
+      rewards: Reward[]
+    }
+
+async function readRewards(
+  connection: Connection,
+  operator: PublicKey,
+  mints: readonly string[],
+): Promise<Reward[]> {
+  const ours = operatorAccountAddress(operator)
+  return Promise.all(
+    mints.map(async (key) => {
+      const mint = new PublicKey(key)
+      const account = await fetchRewardAccount(connection, operator, mint)
+      const rate =
+        account.exists && account.delegate?.equals(ours) === true
+          ? await api.issueRateAttestation(solanaAddressSchema.parse(key))
+          : null
+      return {
+        mint,
+        account,
+        rate: rate?.ok === true ? BigInt(rate.value.stablePerTrillionReward) : null,
+      }
+    }),
+  )
+}
+
+function rewardToken(mint: PublicKey): { symbol: string; decimals: number } | null {
+  for (const [networkId, configured] of chainConfig.rewardMints) {
+    if (configured.equals(mint)) return SUPPORTED_NETWORKS.get(networkId)?.token ?? null
+  }
+  return null
+}
+
+type Moved = Exclude<RepaymentDelegation, { kind: 'keep' }>
+
+function delegationText(delegation: Moved, mint: PublicKey): string {
+  if (delegation.kind === 'revoke') return 'nothing, the permission is revoked'
+  const token = rewardToken(mint)
+  return token === null
+    ? `${delegation.allowance} base units`
+    : `${formatTokens(delegation.allowance.toString(), token.decimals)} ${token.symbol}`
+}
 
 type Choice = 'next' | 'all' | 'custom'
 
@@ -254,10 +317,18 @@ const Repay = ({
     () => [...new Set(loans.map((loan) => loan.account.pool.toBase58()))],
     [loans],
   )
+  const rewardKeys = useMemo(
+    () => [...new Set(loans.map((loan) => loan.account.rewardMint.toBase58()))],
+    [loans],
+  )
+  const ours = useMemo(() => operatorAccountAddress(operator), [operator])
   useEffect(() => {
     let live = true
-    Promise.all(poolKeys.map((pool) => fetchPool(connection, new PublicKey(pool))))
-      .then(async (pools) => {
+    Promise.all([
+      Promise.all(poolKeys.map((pool) => fetchPool(connection, new PublicKey(pool)))),
+      readRewards(connection, operator, rewardKeys),
+    ])
+      .then(async ([pools, rewards]) => {
         // One pool per stablecoin, and the page lends one stablecoin, so one balance.
         const stableMint = pools[0]?.account.stableMint
         const balance =
@@ -267,6 +338,7 @@ const Repay = ({
             status: 'ready',
             pools: new Map(pools.map((pool) => [pool.address.toBase58(), pool])),
             balance,
+            rewards,
           })
         }
       })
@@ -281,7 +353,7 @@ const Repay = ({
     return () => {
       live = false
     }
-  }, [connection, operator, poolKeys])
+  }, [connection, operator, poolKeys, rewardKeys])
 
   const states = loans.map((loan) => loan.account)
   const amountAt = (at: bigint): bigint | null => {
@@ -298,6 +370,23 @@ const Repay = ({
   const short = chain.status === 'ready' && needed !== null && needed > chain.balance
   const busy = stage.step === 'signing' || stage.step === 'confirming'
   const canSign = chain.status === 'ready' && allocation?.ok === true && !short && !busy
+  const moved = (rewards: readonly Reward[], perLoan: readonly bigint[], at: bigint) =>
+    rewards.flatMap((reward) => {
+      const delegation = delegationAfterRepayment({
+        loans: states,
+        perLoan,
+        rewardMint: reward.mint,
+        account: reward.account,
+        ours,
+        rate: reward.rate,
+        at,
+      })
+      return delegation.kind === 'keep' ? [] : [{ reward, delegation }]
+    })
+  const delegations =
+    chain.status === 'ready' && allocation?.ok === true
+      ? moved(chain.rewards, allocation.perLoan, now)
+      : []
 
   const sign = async () => {
     if (chain.status !== 'ready') return
@@ -306,14 +395,31 @@ const Repay = ({
     const split = fresh === null ? null : allocateRepayment(states, fresh, at)
     if (split === null || !split.ok) return
     try {
-      const instructions = await Promise.all(
-        loans.flatMap((loan, index) => {
-          const maxAmount = split.perLoan[index] ?? 0n
-          const pool = chain.pools.get(loan.account.pool.toBase58())
-          if (maxAmount === 0n || pool === undefined) return []
-          return [repayInstruction(program, { payer: operator, pool, loan, maxAmount })]
-        }),
+      // The accounts and the rate are read again here, not taken from the screen: the
+      // operator may have revoked since, and the allowance must not outgrow the debt.
+      const [repays, rewards] = await Promise.all([
+        Promise.all(
+          loans.flatMap((loan, index) => {
+            const maxAmount = split.perLoan[index] ?? 0n
+            const pool = chain.pools.get(loan.account.pool.toBase58())
+            if (maxAmount === 0n || pool === undefined) return []
+            return [repayInstruction(program, { payer: operator, pool, loan, maxAmount })]
+          }),
+        ),
+        readRewards(connection, operator, rewardKeys),
+      ])
+      const permissions = moved(rewards, split.perLoan, at).map(
+        ({ reward, delegation }): TransactionInstruction =>
+          delegation.kind === 'revoke'
+            ? revokeInstruction({ account: reward.account.address, owner: operator })
+            : approveInstruction({
+                account: reward.account.address,
+                delegate: ours,
+                owner: operator,
+                amount: delegation.allowance,
+              }),
       )
+      const instructions = [...repays, ...permissions]
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
       const transaction = new Transaction({
         feePayer: operator,
@@ -394,6 +500,29 @@ const Repay = ({
           {allocation?.ok === false && allocation.reason === 'over-debt' && (
             <p className="mt-3 text-[12px] text-amber">
               That is more than everything owed: up to {formatCost(allocation.max)}.
+            </p>
+          )}
+          {delegations.length > 0 && (
+            <div>
+              {delegations.map(({ reward, delegation }) => (
+                <DefRow
+                  key={reward.mint.toBase58()}
+                  label={`then the protocol may withhold from your ${rewardToken(reward.mint)?.symbol ?? reward.mint.toBase58()}`}
+                  value={delegationText(delegation, reward.mint)}
+                />
+              ))}
+            </div>
+          )}
+          {delegations.some(
+            ({ reward, delegation }) => delegation.kind === 'set' && reward.rate === null,
+          ) && (
+            <p className="mt-3 max-w-[60ch] text-[12px] leading-relaxed text-dim">
+              The api has no rate right now, so the permission is lowered in proportion to the debt.
+              Set it at the attested rate on the{' '}
+              <Link to="/mandate" className="text-ink underline underline-offset-4">
+                mandate
+              </Link>{' '}
+              page later.
             </p>
           )}
           {short && allocation?.ok === true && (

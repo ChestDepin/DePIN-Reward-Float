@@ -2,7 +2,13 @@ import type { RewardAccount } from '@drf/anchor-client'
 import { REPAYMENT_PERIOD_SECONDS } from '@drf/shared/loan'
 import { Keypair, type PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
-import { delegationFor, foreignDelegate, type MandateLoan, mandateState } from './mandate'
+import {
+  delegationAfterRepayment,
+  delegationFor,
+  foreignDelegate,
+  type MandateLoan,
+  mandateState,
+} from './mandate'
 
 function key(seed: number): PublicKey {
   return Keypair.fromSeed(new Uint8Array(32).fill(seed)).publicKey
@@ -148,5 +154,74 @@ describe('mandateState', () => {
       delegatedAmount: 4n,
       target: 5n,
     })
+  })
+})
+
+describe('delegationAfterRepayment', () => {
+  const AT = NOW + 10n * 86_400n
+  const loans = [loan(HONEY, 100_000_000n), loan(HONEY, 50_000_000n), loan(HNT, 50_000_000n)]
+  const DELEGATED = 60_000_000_000_000n
+  const after = (
+    perLoan: bigint[],
+    overrides: Partial<{ account: RewardAccount; rate: bigint | null }> = {},
+  ) =>
+    delegationAfterRepayment({
+      loans,
+      perLoan,
+      rewardMint: HONEY,
+      account: account(OURS, DELEGATED),
+      ours: OURS,
+      rate: RATE,
+      at: AT,
+      ...overrides,
+    })
+
+  // FR-014a as a state: what the HONEY loans can still be owed, at the attested rate.
+  it('sets the allowance to what the loans left on this token can still be owed', () => {
+    expect(after([30_000_000n, 0n, 0n])).toEqual({
+      kind: 'set',
+      ceiling: 126_106_210n,
+      allowance: 52_398_803_820_395n,
+    })
+  })
+
+  it('may set it higher than it was: the allowance follows the debt, not the last one', () => {
+    expect(after([30_000_000n, 0n, 0n], { account: account(OURS, 1n) })).toMatchObject({
+      kind: 'set',
+      allowance: 52_398_803_820_395n,
+    })
+  })
+
+  // The ceiling within the term does not move with time, so the old allowance scaled by
+  // it stays within the debt at whatever rate the operator agreed to.
+  it('scales the allowance down with the debt when there is no rate', () => {
+    expect(after([30_000_000n, 0n, 0n], { rate: null })).toEqual({
+      kind: 'set',
+      ceiling: 126_106_210n,
+      allowance: 48_071_819_344_706n,
+    })
+  })
+
+  it('revokes once no loan repaid from this token is left open', () => {
+    expect(after([200_000_000n, 100_000_000n, 0n])).toEqual({ kind: 'revoke' })
+    expect(after([200_000_000n, 100_000_000n, 0n], { rate: null })).toEqual({ kind: 'revoke' })
+  })
+
+  it('leaves the allowance alone when no loan on this token was repaid', () => {
+    expect(after([0n, 0n, 50_000_000n])).toEqual({ kind: 'keep' })
+  })
+
+  // FR-014: a revoked permission is the operator's choice, and another protocol's
+  // permission is not ours to touch.
+  it('never touches a permission that is not ours and alive', () => {
+    for (const other of [
+      account(null, 0n),
+      account(STRANGER, DELEGATED),
+      account(OURS, 0n),
+      { address: ACCOUNT, exists: false } as const,
+    ]) {
+      expect(after([200_000_000n, 100_000_000n, 0n], { account: other })).toEqual({ kind: 'keep' })
+      expect(after([30_000_000n, 0n, 0n], { account: other })).toEqual({ kind: 'keep' })
+    }
   })
 })
