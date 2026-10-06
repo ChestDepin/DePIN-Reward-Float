@@ -295,6 +295,137 @@
       ]
     },
     {
+      "name": "init_conversion_vault",
+      "discriminator": [
+        62,
+        37,
+        49,
+        42,
+        239,
+        80,
+        141,
+        135
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "pool"
+        },
+        {
+          "name": "conversion_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  118
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "reward_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reward_mint"
+        },
+        {
+          "name": "stable_mint"
+        },
+        {
+          "name": "stable_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  118,
+                  95,
+                  115,
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "conversion_vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reward_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  118,
+                  95,
+                  114,
+                  101,
+                  119,
+                  97,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "conversion_vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "spread_bps",
+          "type": "u16"
+        },
+        {
+          "name": "max_slippage_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
       "name": "initialize_pool",
       "discriminator": [
         95,
@@ -581,6 +712,19 @@
   ],
   "accounts": [
     {
+      "name": "ConversionVault",
+      "discriminator": [
+        252,
+        10,
+        31,
+        131,
+        167,
+        195,
+        174,
+        97
+      ]
+    },
+    {
       "name": "LenderShare",
       "discriminator": [
         241,
@@ -788,9 +932,55 @@
       "code": 6030,
       "name": "DelegationTooSmall",
       "msg": "at the attested rate the debt is worth less than one base unit of the reward token"
+    },
+    {
+      "code": 6031,
+      "name": "InvalidConversionTerms",
+      "msg": "the spread and the slippage tolerance must each be below 10000 basis points"
+    },
+    {
+      "code": 6032,
+      "name": "RewardMintIsStablecoin",
+      "msg": "the reward token cannot be the pool's own stablecoin"
     }
   ],
   "types": [
+    {
+      "name": "ConversionVault",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "stable_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "spread_bps",
+            "type": "u16"
+          },
+          {
+            "name": "max_slippage_bps",
+            "type": "u16"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
     {
       "name": "LenderShare",
       "type": {

@@ -55,6 +55,23 @@ export async function encodeOperatorAccount(owner: PublicKey, openLoans: number)
   })
 }
 
+export async function encodeConversionVault(fields: {
+  pool: PublicKey
+  rewardMint: PublicKey
+  spreadBps: number
+  maxSlippageBps: number
+}): Promise<Buffer> {
+  return coder.accounts.encode('conversionVault', {
+    pool: fields.pool,
+    rewardMint: fields.rewardMint,
+    stableVault: key(81),
+    rewardVault: key(82),
+    spreadBps: fields.spreadBps,
+    maxSlippageBps: fields.maxSlippageBps,
+    bump: 253,
+  })
+}
+
 export async function encodePool(fields: {
   attestor: PublicKey
   stableMint: PublicKey

@@ -2,6 +2,9 @@ import { BN } from '@coral-xyz/anchor'
 import { PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 import {
+  conversionRewardVaultAddress,
+  conversionStableVaultAddress,
+  conversionVaultAddress,
   lenderShareAddress,
   loanAddress,
   operatorAccountAddress,
@@ -61,6 +64,34 @@ describe('program addresses', () => {
 
     expect(lenderShareAddress(pool, lender).equals(resolved.lenderShare as PublicKey)).toBe(true)
     expect(lenderShareAddress(key(5), lender).equals(lenderShareAddress(pool, lender))).toBe(false)
+  })
+
+  it('derives a conversion vault and its two token accounts as init_conversion_vault does', async () => {
+    const pool = key(6)
+    const rewardMint = key(7)
+    const resolved = await program.methods
+      .initConversionVault(30, 100)
+      .accountsPartial({ authority: key(3), pool, rewardMint, stableMint: key(8) })
+      .pubkeys()
+
+    const conversionVault = conversionVaultAddress(pool, rewardMint)
+    expect(conversionVault.equals(resolved.conversionVault as PublicKey)).toBe(true)
+    expect(
+      conversionStableVaultAddress(conversionVault).equals(resolved.stableVault as PublicKey),
+    ).toBe(true)
+    expect(
+      conversionRewardVaultAddress(conversionVault).equals(resolved.rewardVault as PublicKey),
+    ).toBe(true)
+  })
+
+  it('gives each pool and reward token a vault of its own', () => {
+    const honey = conversionVaultAddress(key(6), key(7))
+
+    expect(honey.equals(conversionVaultAddress(key(6), key(8)))).toBe(false)
+    expect(honey.equals(conversionVaultAddress(key(5), key(7)))).toBe(false)
+    expect(conversionStableVaultAddress(honey).equals(conversionRewardVaultAddress(honey))).toBe(
+      false,
+    )
   })
 
   it('gives every nonce its own loan, including the largest u64', () => {

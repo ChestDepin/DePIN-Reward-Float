@@ -39,3 +39,15 @@ export function lenderShareAddress(pool: PublicKey, owner: PublicKey): PublicKey
 export function loanAddress(operator: PublicKey, nonce: bigint): PublicKey {
   return derive([seed('loan'), operator.toBuffer(), u64Bytes(nonce)])
 }
+
+export function conversionVaultAddress(pool: PublicKey, rewardMint: PublicKey): PublicKey {
+  return derive([seed('conv'), pool.toBuffer(), rewardMint.toBuffer()])
+}
+
+export function conversionStableVaultAddress(conversionVault: PublicKey): PublicKey {
+  return derive([seed('conv_stable'), conversionVault.toBuffer()])
+}
+
+export function conversionRewardVaultAddress(conversionVault: PublicKey): PublicKey {
+  return derive([seed('conv_reward'), conversionVault.toBuffer()])
+}

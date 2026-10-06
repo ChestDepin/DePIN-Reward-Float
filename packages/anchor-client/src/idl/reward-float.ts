@@ -296,6 +296,137 @@ export type RewardFloat = {
       ]
     },
     {
+      "name": "initConversionVault",
+      "discriminator": [
+        62,
+        37,
+        49,
+        42,
+        239,
+        80,
+        141,
+        135
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "pool"
+        },
+        {
+          "name": "conversionVault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  118
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "rewardMint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rewardMint"
+        },
+        {
+          "name": "stableMint"
+        },
+        {
+          "name": "stableVault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  118,
+                  95,
+                  115,
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "conversionVault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rewardVault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  118,
+                  95,
+                  114,
+                  101,
+                  119,
+                  97,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "conversionVault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "spreadBps",
+          "type": "u16"
+        },
+        {
+          "name": "maxSlippageBps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
       "name": "initializePool",
       "discriminator": [
         95,
@@ -582,6 +713,19 @@ export type RewardFloat = {
   ],
   "accounts": [
     {
+      "name": "conversionVault",
+      "discriminator": [
+        252,
+        10,
+        31,
+        131,
+        167,
+        195,
+        174,
+        97
+      ]
+    },
+    {
       "name": "lenderShare",
       "discriminator": [
         241,
@@ -789,9 +933,55 @@ export type RewardFloat = {
       "code": 6030,
       "name": "delegationTooSmall",
       "msg": "at the attested rate the debt is worth less than one base unit of the reward token"
+    },
+    {
+      "code": 6031,
+      "name": "invalidConversionTerms",
+      "msg": "the spread and the slippage tolerance must each be below 10000 basis points"
+    },
+    {
+      "code": 6032,
+      "name": "rewardMintIsStablecoin",
+      "msg": "the reward token cannot be the pool's own stablecoin"
     }
   ],
   "types": [
+    {
+      "name": "conversionVault",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "rewardMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "stableVault",
+            "type": "pubkey"
+          },
+          {
+            "name": "rewardVault",
+            "type": "pubkey"
+          },
+          {
+            "name": "spreadBps",
+            "type": "u16"
+          },
+          {
+            "name": "maxSlippageBps",
+            "type": "u16"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
     {
       "name": "lenderShare",
       "type": {
@@ -1314,6 +1504,137 @@ export const rewardFloatIdl: RewardFloat = {
       ]
     },
     {
+      "name": "initConversionVault",
+      "discriminator": [
+        62,
+        37,
+        49,
+        42,
+        239,
+        80,
+        141,
+        135
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "pool"
+        },
+        {
+          "name": "conversionVault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  118
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "rewardMint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rewardMint"
+        },
+        {
+          "name": "stableMint"
+        },
+        {
+          "name": "stableVault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  118,
+                  95,
+                  115,
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "conversionVault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rewardVault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  118,
+                  95,
+                  114,
+                  101,
+                  119,
+                  97,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "conversionVault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "spreadBps",
+          "type": "u16"
+        },
+        {
+          "name": "maxSlippageBps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
       "name": "initializePool",
       "discriminator": [
         95,
@@ -1600,6 +1921,19 @@ export const rewardFloatIdl: RewardFloat = {
   ],
   "accounts": [
     {
+      "name": "conversionVault",
+      "discriminator": [
+        252,
+        10,
+        31,
+        131,
+        167,
+        195,
+        174,
+        97
+      ]
+    },
+    {
       "name": "lenderShare",
       "discriminator": [
         241,
@@ -1807,9 +2141,55 @@ export const rewardFloatIdl: RewardFloat = {
       "code": 6030,
       "name": "delegationTooSmall",
       "msg": "at the attested rate the debt is worth less than one base unit of the reward token"
+    },
+    {
+      "code": 6031,
+      "name": "invalidConversionTerms",
+      "msg": "the spread and the slippage tolerance must each be below 10000 basis points"
+    },
+    {
+      "code": 6032,
+      "name": "rewardMintIsStablecoin",
+      "msg": "the reward token cannot be the pool's own stablecoin"
     }
   ],
   "types": [
+    {
+      "name": "conversionVault",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "rewardMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "stableVault",
+            "type": "pubkey"
+          },
+          {
+            "name": "rewardVault",
+            "type": "pubkey"
+          },
+          {
+            "name": "spreadBps",
+            "type": "u16"
+          },
+          {
+            "name": "maxSlippageBps",
+            "type": "u16"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
     {
       "name": "lenderShare",
       "type": {

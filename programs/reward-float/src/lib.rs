@@ -46,6 +46,14 @@ pub mod reward_float {
         handle_deposit(ctx, amount)
     }
 
+    pub fn init_conversion_vault(
+        ctx: Context<InitConversionVault>,
+        spread_bps: u16,
+        max_slippage_bps: u16,
+    ) -> Result<()> {
+        handle_init_conversion_vault(ctx, spread_bps, max_slippage_bps)
+    }
+
     pub fn repay(ctx: Context<Repay>, max_amount: u64) -> Result<()> {
         handle_repay(ctx, max_amount)
     }

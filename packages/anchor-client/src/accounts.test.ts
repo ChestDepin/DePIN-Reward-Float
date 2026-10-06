@@ -8,9 +8,11 @@ import {
 import { describe, expect, it } from 'vitest'
 import {
   type ChainReader,
+  decodeConversionVault,
   decodeLoan,
   decodeOperatorAccount,
   decodePool,
+  fetchConversionVault,
   fetchOpenLoans,
   fetchOperatorAccount,
   fetchPool,
@@ -18,7 +20,13 @@ import {
   openLoansForBorrow,
 } from './accounts.ts'
 import { operatorAccountAddress, rewardFloatProgramId } from './pda.ts'
-import { encodeLoan, encodeOperatorAccount, encodePool, key } from './test-support.ts'
+import {
+  encodeConversionVault,
+  encodeLoan,
+  encodeOperatorAccount,
+  encodePool,
+  key,
+} from './test-support.ts'
 
 type Stored = { pubkey: PublicKey; account: AccountInfo<Buffer> }
 
@@ -91,6 +99,25 @@ describe('decoding program accounts', () => {
     expect(pool.accrualRemainders).toBe(5n)
   })
 
+  it('reads a conversion vault with its spread and tolerance', async () => {
+    const vault = decodeConversionVault(
+      await encodeConversionVault({
+        pool: key(6),
+        rewardMint: key(7),
+        spreadBps: 30,
+        maxSlippageBps: 100,
+      }),
+    )
+
+    expect(vault.pool.equals(key(6))).toBe(true)
+    expect(vault.rewardMint.equals(key(7))).toBe(true)
+    expect(vault.stableVault.equals(key(81))).toBe(true)
+    expect(vault.rewardVault.equals(key(82))).toBe(true)
+    expect(vault.spreadBps).toBe(30)
+    expect(vault.maxSlippageBps).toBe(100)
+    expect(vault.bump).toBe(253)
+  })
+
   it('refuses bytes of another account type', async () => {
     const pool = await encodePool({ attestor: key(3), stableMint: key(4), vault: key(5) })
 
@@ -122,6 +149,20 @@ describe('reading accounts from the chain', () => {
 
     await expect(fetchPool(reader, key(8))).rejects.toThrow(/not found/)
     await expect(fetchPool(reader, key(9))).rejects.toThrow(/not owned by/)
+  })
+
+  it('reads a conversion vault that is not there yet as missing', async () => {
+    const data = await encodeConversionVault({
+      pool: key(6),
+      rewardMint: key(7),
+      spreadBps: 30,
+      maxSlippageBps: 100,
+    })
+    const reader = chain([stored(key(9), data), stored(key(10), data, key(77))])
+
+    expect(await fetchConversionVault(reader, key(8))).toBeNull()
+    expect((await fetchConversionVault(reader, key(9)))?.spreadBps).toBe(30)
+    await expect(fetchConversionVault(reader, key(10))).rejects.toThrow(/not owned by/)
   })
 
   it('reads a missing operator account as an operator who never borrowed', async () => {

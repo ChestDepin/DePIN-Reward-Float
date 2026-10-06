@@ -61,6 +61,17 @@ export const poolSchema = z.object({
   bump: small,
 })
 
+export const conversionVaultSchema = z.object({
+  pool: pubkey,
+  rewardMint: pubkey,
+  stableVault: pubkey,
+  rewardVault: pubkey,
+  spreadBps: small,
+  maxSlippageBps: small,
+  bump: small,
+})
+
+export type ConversionVaultAccount = z.infer<typeof conversionVaultSchema>
 export type LoanAccount = z.infer<typeof loanSchema>
 export type OperatorAccount = z.infer<typeof operatorAccountSchema>
 export type PoolAccount = z.infer<typeof poolSchema>
@@ -76,6 +87,10 @@ export function decodeOperatorAccount(data: Buffer): OperatorAccount {
 
 export function decodePool(data: Buffer): PoolAccount {
   return poolSchema.parse(coder.accounts.decode<unknown>('pool', data))
+}
+
+export function decodeConversionVault(data: Buffer): ConversionVaultAccount {
+  return conversionVaultSchema.parse(coder.accounts.decode<unknown>('conversionVault', data))
 }
 
 // The two calls a Connection answers here, narrowed so that tests can stand in for it.
@@ -105,6 +120,14 @@ export async function fetchPool(
   const data = await readProgramAccount(reader, address)
   if (data === null) throw new Error(`pool ${address.toBase58()} not found`)
   return { address, account: decodePool(data) }
+}
+
+export async function fetchConversionVault(
+  reader: ChainReader,
+  address: PublicKey,
+): Promise<ConversionVaultAccount | null> {
+  const data = await readProgramAccount(reader, address)
+  return data === null ? null : decodeConversionVault(data)
 }
 
 // No account means the operator has never borrowed: borrow opens it with the first loan.

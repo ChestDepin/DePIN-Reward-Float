@@ -68,4 +68,8 @@ pub enum RewardFloatError {
     RateAttestationStale,
     #[msg("at the attested rate the debt is worth less than one base unit of the reward token")]
     DelegationTooSmall,
+    #[msg("the spread and the slippage tolerance must each be below 10000 basis points")]
+    InvalidConversionTerms,
+    #[msg("the reward token cannot be the pool's own stablecoin")]
+    RewardMintIsStablecoin,
 }
