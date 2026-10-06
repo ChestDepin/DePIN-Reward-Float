@@ -1,5 +1,6 @@
 import { rewardMintsSchema } from '@drf/anchor-client'
 import { type SolanaAddress, solanaAddressSchema } from '@drf/shared/schemas'
+import { base58 as base58Codec } from '@scure/base'
 import { z } from 'zod'
 
 const base58 = /^[1-9A-HJ-NP-Za-km-z]{32,128}$/
@@ -25,6 +26,15 @@ function unsetWhenEmpty<T extends z.ZodType>(schema: T) {
 }
 
 const RATE_VARIABLES = ['JUPITER_API_KEY', 'MAINNET_RPC_URL', 'REWARD_MINTS'] as const
+const KEEPER_SEED_BYTES = 32
+
+function isKeeperSeed(value: string): boolean {
+  try {
+    return base58Codec.decode(value).length === KEEPER_SEED_BYTES
+  } catch {
+    return false
+  }
+}
 
 const apiEnvSchema = z
   .object({
@@ -39,6 +49,13 @@ const apiEnvSchema = z
     JUPITER_API_KEY: unsetWhenEmpty(z.string().optional()),
     MAINNET_RPC_URL: unsetWhenEmpty(z.url({ protocol: /^https?$/ }).optional()),
     REWARD_MINTS: unsetWhenEmpty(z.string().optional()),
+    // The keeper (FR-015) starts with its key and only then needs the rest: the seed
+    // scripts read DEVNET_RPC_URL and STABLE_MINT from the same .env.
+    KEEPER_SECRET_KEY: unsetWhenEmpty(
+      z.string().refine(isKeeperSeed, 'expected a base58 32-byte ed25519 seed').optional(),
+    ),
+    DEVNET_RPC_URL: unsetWhenEmpty(z.url({ protocol: /^https?$/ }).optional()),
+    STABLE_MINT: unsetWhenEmpty(solanaAddressSchema.optional()),
   })
   .superRefine((env, ctx) => {
     if (env.REWARD_MINTS !== undefined) {
@@ -48,12 +65,26 @@ const apiEnvSchema = z
       }
     }
     const missing = RATE_VARIABLES.filter((name) => env[name] === undefined)
-    if (missing.length === 0 || missing.length === RATE_VARIABLES.length) return
-    for (const name of missing) {
+    if (missing.length !== 0 && missing.length !== RATE_VARIABLES.length) {
+      for (const name of missing) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [name],
+          message: 'needed with the other rate variables',
+        })
+      }
+    }
+    if (env.KEEPER_SECRET_KEY === undefined) return
+    for (const name of ['DEVNET_RPC_URL', 'STABLE_MINT'] as const) {
+      if (env[name] === undefined) {
+        ctx.addIssue({ code: 'custom', path: [name], message: 'needed by the keeper' })
+      }
+    }
+    if (missing.length !== 0) {
       ctx.addIssue({
         code: 'custom',
-        path: [name],
-        message: 'needed with the other rate variables',
+        path: ['KEEPER_SECRET_KEY'],
+        message: 'the keeper needs the rate variables: every sweep carries a signed rate',
       })
     }
   })
@@ -64,6 +95,12 @@ export type RateConfig = {
   rewardMints: ReadonlyMap<string, SolanaAddress>
 }
 
+export type KeeperConfig = {
+  secretKey: Uint8Array
+  devnetRpcUrl: string
+  stableMint: SolanaAddress
+}
+
 export type ApiConfig = {
   databaseUrl: string
   attestorSecretKey: string
@@ -72,6 +109,7 @@ export type ApiConfig = {
   webOrigins: readonly string[]
   logLevel: z.infer<typeof apiEnvSchema>['LOG_LEVEL']
   rates: RateConfig | null
+  keeper: KeeperConfig | null
 }
 
 export function parseApiConfig(env: unknown): ApiConfig {
@@ -94,6 +132,7 @@ export function parseApiConfig(env: unknown): ApiConfig {
     webOrigins: parsed.data.WEB_ORIGIN,
     logLevel: parsed.data.LOG_LEVEL,
     rates: rateConfig(parsed.data),
+    keeper: keeperConfig(parsed.data),
   }
 }
 
@@ -111,6 +150,22 @@ function rateConfig(env: z.infer<typeof apiEnvSchema>): RateConfig | null {
     rewardMints.set(networkId, solanaAddressSchema.parse(mint.toBase58()))
   }
   return { jupiterApiKey: JUPITER_API_KEY, mainnetRpcUrl: MAINNET_RPC_URL, rewardMints }
+}
+
+function keeperConfig(env: z.infer<typeof apiEnvSchema>): KeeperConfig | null {
+  const { KEEPER_SECRET_KEY, DEVNET_RPC_URL, STABLE_MINT } = env
+  if (
+    KEEPER_SECRET_KEY === undefined ||
+    DEVNET_RPC_URL === undefined ||
+    STABLE_MINT === undefined
+  ) {
+    return null
+  }
+  return {
+    secretKey: base58Codec.decode(KEEPER_SECRET_KEY),
+    devnetRpcUrl: DEVNET_RPC_URL,
+    stableMint: STABLE_MINT,
+  }
 }
 
 export function loadApiConfig(): ApiConfig {

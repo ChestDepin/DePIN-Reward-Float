@@ -1,5 +1,10 @@
 import { utils } from '@coral-xyz/anchor'
-import { type PublicKey, SystemProgram, TransactionInstruction } from '@solana/web3.js'
+import {
+  type AccountInfo,
+  type PublicKey,
+  SystemProgram,
+  TransactionInstruction,
+} from '@solana/web3.js'
 import type { ChainReader } from './accounts.ts'
 import { u64Bytes } from './pda.ts'
 
@@ -58,13 +63,7 @@ const TOKEN_ACCOUNT_SIZE = 165
 const AMOUNT_OFFSET = 64
 
 // An associated account is created on first receipt; until then the wallet holds none.
-export async function fetchStableBalance(
-  reader: ChainReader,
-  owner: PublicKey,
-  mint: PublicKey,
-): Promise<bigint> {
-  const address = utils.token.associatedAddress({ mint, owner })
-  const info = await reader.getAccountInfo(address)
+export function tokenAmount(address: PublicKey, info: AccountInfo<Buffer> | null): bigint {
   if (info === null) return 0n
   if (!info.owner.equals(utils.token.TOKEN_PROGRAM_ID)) {
     throw new Error(`${address.toBase58()} is not owned by the token program`)
@@ -73,4 +72,13 @@ export async function fetchStableBalance(
     throw new Error(`${address.toBase58()} is too short to be a token account`)
   }
   return info.data.readBigUInt64LE(AMOUNT_OFFSET)
+}
+
+export async function fetchStableBalance(
+  reader: ChainReader,
+  owner: PublicKey,
+  mint: PublicKey,
+): Promise<bigint> {
+  const address = utils.token.associatedAddress({ mint, owner })
+  return tokenAmount(address, await reader.getAccountInfo(address))
 }

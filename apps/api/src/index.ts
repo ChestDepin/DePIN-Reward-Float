@@ -1,10 +1,12 @@
 import { createDatabase } from '@drf/db'
 import { createLogger } from '@drf/shared/log'
 import { SUPPORTED_NETWORKS } from '@drf/shared/schemas'
+import { startDevnetKeeper } from '@drf/worker/keeper'
 import { serve } from '@hono/node-server'
 import { createApp } from './app.ts'
 import { loadApiConfig, type RateConfig } from './config.ts'
 import { createJupiterRateSource, createRpcBlockTime, rateMints } from './jupiter.ts'
+import { rateFromApp } from './keeper.ts'
 import { resolveAttestor } from './routes/attestations.ts'
 import type { RateSource } from './routes/rate.ts'
 import { createShutdown } from './shutdown.ts'
@@ -67,6 +69,18 @@ const app = createApp({
   now: () => new Date(),
 })
 
+// Render's free plan has no background workers, so the keeper runs in this process.
+const keeper =
+  config.keeper === null
+    ? null
+    : startDevnetKeeper({
+        rpcUrl: config.keeper.devnetRpcUrl,
+        secretKey: config.keeper.secretKey,
+        stableMint: config.keeper.stableMint,
+        issueRate: rateFromApp(app),
+        logger: logger.child({ component: 'keeper' }),
+      })
+
 const server = serve({ fetch: app.fetch, port: config.port }, (address) => {
   logger.info({ port: address.port }, 'api listening')
 })
@@ -83,6 +97,7 @@ const shutdown = createShutdown({
 
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
+    keeper?.stop()
     shutdown(signal).then((code) => process.exit(code))
   })
 }

@@ -71,10 +71,18 @@ export const conversionVaultSchema = z.object({
   bump: small,
 })
 
+export const rewardWatchSchema = z.object({
+  operator: pubkey,
+  rewardMint: pubkey,
+  balance: integer,
+  bump: small,
+})
+
 export type ConversionVaultAccount = z.infer<typeof conversionVaultSchema>
 export type LoanAccount = z.infer<typeof loanSchema>
 export type OperatorAccount = z.infer<typeof operatorAccountSchema>
 export type PoolAccount = z.infer<typeof poolSchema>
+export type RewardWatchAccount = z.infer<typeof rewardWatchSchema>
 export type OnChain<T> = { address: PublicKey; account: T }
 
 export function decodeLoan(data: Buffer): LoanAccount {
@@ -91,6 +99,10 @@ export function decodePool(data: Buffer): PoolAccount {
 
 export function decodeConversionVault(data: Buffer): ConversionVaultAccount {
   return conversionVaultSchema.parse(coder.accounts.decode<unknown>('conversionVault', data))
+}
+
+export function decodeRewardWatch(data: Buffer): RewardWatchAccount {
+  return rewardWatchSchema.parse(coder.accounts.decode<unknown>('rewardWatch', data))
 }
 
 // The two calls a Connection answers here, narrowed so that tests can stand in for it.
@@ -145,28 +157,26 @@ const LOAN_OPERATOR_OFFSET = 8
 const LOAN_STATUS_OFFSET = 8 + 3 * 32 + 8 * 8 + 2 * 2
 const OPEN_STATUS_VARIANTS = [0, 1]
 
-function loanDiscriminator(): number[] {
-  const loan = rewardFloatIdl.accounts.find((account) => account.name === 'loan')
-  if (loan === undefined) throw new Error('the vendored IDL has no loan account')
-  return loan.discriminator
+function discriminator(name: 'loan' | 'rewardWatch'): number[] {
+  const account = rewardFloatIdl.accounts.find((candidate) => candidate.name === name)
+  if (account === undefined) throw new Error(`the vendored IDL has no ${name} account`)
+  return account.discriminator
 }
 
 function memcmp(offset: number, bytes: Uint8Array | number[]): GetProgramAccountsFilter {
   return { memcmp: { offset, bytes: utils.bytes.bs58.encode(Buffer.from(bytes)) } }
 }
 
-// Loans are never closed, so a filter on the operator alone would also return every
-// loan they ever repaid. A memcmp cannot say "not repaid", hence a query per open status.
-export async function fetchOpenLoans(
+async function queryOpenLoans(
   reader: ChainReader,
-  operator: PublicKey,
+  filters: GetProgramAccountsFilter[],
 ): Promise<OnChain<LoanAccount>[]> {
   const pages = await Promise.all(
     OPEN_STATUS_VARIANTS.map((status) =>
       reader.getProgramAccounts(rewardFloatProgramId, {
         filters: [
-          memcmp(0, loanDiscriminator()),
-          memcmp(LOAN_OPERATOR_OFFSET, operator.toBuffer()),
+          memcmp(0, discriminator('loan')),
+          ...filters,
           memcmp(LOAN_STATUS_OFFSET, [status]),
         ],
       }),
@@ -175,6 +185,31 @@ export async function fetchOpenLoans(
   return pages.flat().map(({ pubkey, account }) => ({
     address: pubkey,
     account: decodeLoan(account.data),
+  }))
+}
+
+// Loans are never closed, so a filter on the operator alone would also return every
+// loan they ever repaid. A memcmp cannot say "not repaid", hence a query per open status.
+export async function fetchOpenLoans(
+  reader: ChainReader,
+  operator: PublicKey,
+): Promise<OnChain<LoanAccount>[]> {
+  return queryOpenLoans(reader, [memcmp(LOAN_OPERATOR_OFFSET, operator.toBuffer())])
+}
+
+export async function fetchAllOpenLoans(reader: ChainReader): Promise<OnChain<LoanAccount>[]> {
+  return queryOpenLoans(reader, [])
+}
+
+export async function fetchRewardWatches(
+  reader: ChainReader,
+): Promise<OnChain<RewardWatchAccount>[]> {
+  const found = await reader.getProgramAccounts(rewardFloatProgramId, {
+    filters: [memcmp(0, discriminator('rewardWatch'))],
+  })
+  return found.map(({ pubkey, account }) => ({
+    address: pubkey,
+    account: decodeRewardWatch(account.data),
   }))
 }
 

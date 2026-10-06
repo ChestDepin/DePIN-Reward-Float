@@ -24,6 +24,7 @@ describe('parseApiConfig', () => {
       attestorPublicKey: PUBLIC,
       webOrigins: ['https://app.example.com'],
       rates: null,
+      keeper: null,
     })
   })
 
@@ -149,6 +150,71 @@ describe('parseApiConfig: rates', () => {
     } catch (error) {
       expect(String(error)).not.toContain('live-key')
       expect(String(error)).toContain('MAINNET_RPC_URL')
+    }
+  })
+})
+
+describe('parseApiConfig: keeper', () => {
+  // A 32-byte ed25519 seed, the same form as the attestor's.
+  const KEEPER_SEED = 'US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx'
+  const DEVNET_RPC_URL = 'https://devnet.helius-rpc.com/?api-key=live-key'
+  const STABLE_MINT = '9nScQZ7Jq3jvTDNhmS8hJ9ZpCXDQjwW4NHo3x6dU6uZs'
+  const rateEnv = {
+    JUPITER_API_KEY: 'jup-key',
+    MAINNET_RPC_URL: 'https://mainnet.helius-rpc.com/?api-key=other-key',
+    REWARD_MINTS: 'hivemapper:5pbCV2sjzLPiYoY48ic1kmS5juTpjeN27ProW6v3QFS',
+  }
+  const keeperEnv = { KEEPER_SECRET_KEY: KEEPER_SEED, DEVNET_RPC_URL, STABLE_MINT }
+
+  it('reads the fee payer seed, the devnet RPC and the pool’s stablecoin', () => {
+    const { keeper } = parseApiConfig({ ...validEnv, ...rateEnv, ...keeperEnv })
+
+    expect(keeper?.secretKey).toEqual(new Uint8Array(32).fill(7))
+    expect(keeper?.devnetRpcUrl).toBe(DEVNET_RPC_URL)
+    expect(keeper?.stableMint).toBe(STABLE_MINT)
+  })
+
+  // The seed scripts read DEVNET_RPC_URL and STABLE_MINT from the same .env: their
+  // presence alone must not start a keeper, only its key does.
+  it('runs no keeper without its key, whatever else is set', () => {
+    expect(parseApiConfig({ ...validEnv, DEVNET_RPC_URL, STABLE_MINT }).keeper).toBeNull()
+    expect(parseApiConfig({ ...validEnv, ...keeperEnv, KEEPER_SECRET_KEY: '' }).keeper).toBeNull()
+  })
+
+  it('refuses a keeper key without the devnet RPC and the stablecoin, naming both', () => {
+    expect(() =>
+      parseApiConfig({ ...validEnv, ...rateEnv, KEEPER_SECRET_KEY: KEEPER_SEED }),
+    ).toThrow(/DEVNET_RPC_URL[\s\S]*STABLE_MINT/)
+  })
+
+  // Every sweep needs a signed rate, and the rate route is what signs it.
+  it('refuses a keeper without rates', () => {
+    expect(() => parseApiConfig({ ...validEnv, ...keeperEnv })).toThrow(/KEEPER_SECRET_KEY/)
+  })
+
+  it('refuses a key that is not a 32-byte seed, and never prints it', () => {
+    const short = '7DUeBUtEcb7nujVZRJmeBju3X1mo6PpnWNtJ9EBhdY'
+    try {
+      parseApiConfig({ ...validEnv, ...rateEnv, ...keeperEnv, KEEPER_SECRET_KEY: short })
+      expect.unreachable('a 31-byte key must throw')
+    } catch (error) {
+      expect(String(error)).toContain('KEEPER_SECRET_KEY')
+      expect(String(error)).not.toContain(short)
+    }
+  })
+
+  it('never puts the key-bearing devnet RPC url into the error', () => {
+    try {
+      parseApiConfig({
+        ...validEnv,
+        ...rateEnv,
+        ...keeperEnv,
+        DEVNET_RPC_URL: 'ftp://live-key@host',
+      })
+      expect.unreachable('a non-http RPC url must throw')
+    } catch (error) {
+      expect(String(error)).not.toContain('live-key')
+      expect(String(error)).toContain('DEVNET_RPC_URL')
     }
   })
 })

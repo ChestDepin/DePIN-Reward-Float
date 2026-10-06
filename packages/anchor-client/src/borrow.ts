@@ -62,7 +62,7 @@ function checkAttestation(request: BorrowRequest): void {
   }
 }
 
-function signatureCheck(signed: { attestor: string; message: string; signature: string }) {
+export function signatureCheck(signed: { attestor: string; message: string; signature: string }) {
   return Ed25519Program.createInstructionWithPublicKey({
     publicKey: new PublicKey(signed.attestor).toBytes(),
     message: utils.bytes.bs58.decode(signed.message),

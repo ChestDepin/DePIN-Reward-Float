@@ -17,6 +17,7 @@
     "@drf/anchor-client": "workspace:^",
     "@drf/db": "workspace:^",
     "@drf/shared": "workspace:^",
+    "@drf/worker": "workspace:^",
     "@hono/node-server": "^1.19.9",
     "@hono/zod-validator": "^0.9.0",
     "@noble/ed25519": "^3.2.0",

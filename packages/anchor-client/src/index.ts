@@ -10,13 +10,17 @@ export { type RewardFloat, rewardFloatIdl } from './idl/reward-float.ts'
 export * from './pda.ts'
 export * from './repay.ts'
 export * from './reward-mints.ts'
+export * from './sweep.ts'
 export {
   associatedTokenAddress,
   createAssociatedTokenAccountIdempotent,
   fetchStableBalance,
   mintToInstruction,
+  tokenAmount,
 } from './token.ts'
 
-export function rewardFloatProgram(connection: Connection): Program<RewardFloat> {
+export type RewardFloatProgram = Program<RewardFloat>
+
+export function rewardFloatProgram(connection: Connection): RewardFloatProgram {
   return new Program(rewardFloatIdl, { connection })
 }

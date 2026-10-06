@@ -1,6 +1,6 @@
 # Render Blueprint: one free web service running the API. The free plan has
-# no background workers, so the indexer and keeper join this process when
-# they get an entry point, instead of becoming services of their own.
+# no background workers, so the keeper runs inside this process (and the
+# indexer will join it the same way), instead of becoming services of their own.
 #
 # A free instance sleeps after fifteen idle minutes and wakes on the first
 # request in about a minute; `.github/workflows/keep-alive.yml` keeps it up.
@@ -45,4 +45,15 @@ services:
       - key: MAINNET_RPC_URL
         sync: false
       - key: REWARD_MINTS
+        sync: false
+      # The devnet keeper (FR-015). Off until KEEPER_SECRET_KEY is set; then it also
+      # needs the two below and the rate variables above. KEEPER_SECRET_KEY: a base58
+      # 32-byte seed of a fee payer holding devnet SOL and nothing else.
+      # A sleeping instance sweeps nothing: the keeper needs a pinger that really
+      # fires every five minutes, not GitHub's schedule.
+      - key: KEEPER_SECRET_KEY
+        sync: false
+      - key: DEVNET_RPC_URL
+        sync: false
+      - key: STABLE_MINT
         sync: false

@@ -12,10 +12,13 @@ import {
   decodeLoan,
   decodeOperatorAccount,
   decodePool,
+  decodeRewardWatch,
+  fetchAllOpenLoans,
   fetchConversionVault,
   fetchOpenLoans,
   fetchOperatorAccount,
   fetchPool,
+  fetchRewardWatches,
   OpenLoansOutOfSync,
   openLoansForBorrow,
 } from './accounts.ts'
@@ -25,6 +28,7 @@ import {
   encodeLoan,
   encodeOperatorAccount,
   encodePool,
+  encodeRewardWatch,
   key,
 } from './test-support.ts'
 
@@ -118,6 +122,16 @@ describe('decoding program accounts', () => {
     expect(vault.bump).toBe(253)
   })
 
+  it('reads the reward watch of an operator and a mint', async () => {
+    const watch = decodeRewardWatch(
+      await encodeRewardWatch({ operator: key(1), rewardMint: key(7), balance: 2n ** 64n - 1n }),
+    )
+
+    expect(watch.operator.equals(key(1))).toBe(true)
+    expect(watch.rewardMint.equals(key(7))).toBe(true)
+    expect(watch.balance).toBe(18_446_744_073_709_551_615n)
+  })
+
   it('refuses bytes of another account type', async () => {
     const pool = await encodePool({ attestor: key(3), stableMint: key(4), vault: key(5) })
 
@@ -181,6 +195,51 @@ describe('reading accounts from the chain', () => {
     ])
 
     const loans = await fetchOpenLoans(reader, operator)
+
+    expect(loans.map((l) => l.address.toBase58()).sort()).toEqual(
+      [key(11), key(12)].map((k) => k.toBase58()).sort(),
+    )
+    expect(reader.queries).toHaveLength(2)
+  })
+
+  it('finds every reward watch of every operator and no other account', async () => {
+    const reader = chain([
+      stored(
+        key(21),
+        await encodeRewardWatch({ operator: key(1), rewardMint: key(7), balance: 5n }),
+      ),
+      stored(
+        key(22),
+        await encodeRewardWatch({ operator: key(3), rewardMint: key(8), balance: 0n }),
+      ),
+      stored(key(23), await encodeLoan({ operator: key(1), pool: key(2), nonce: 1n })),
+      stored(operatorAccountAddress(key(1)), await encodeOperatorAccount(key(1), 1)),
+    ])
+
+    const watches = await fetchRewardWatches(reader)
+
+    expect(watches.map((w) => [w.address.toBase58(), w.account.balance])).toEqual([
+      [key(21).toBase58(), 5n],
+      [key(22).toBase58(), 0n],
+    ])
+    expect(reader.queries).toHaveLength(1)
+  })
+
+  it('finds the open loans of every operator, none that are repaid', async () => {
+    const reader = chain([
+      stored(key(11), await encodeLoan({ operator: key(1), pool: key(2), nonce: 1n })),
+      stored(
+        key(12),
+        await encodeLoan({ operator: key(3), pool: key(2), nonce: 1n, status: 'overdue' }),
+      ),
+      stored(
+        key(13),
+        await encodeLoan({ operator: key(1), pool: key(2), nonce: 2n, status: 'repaid' }),
+      ),
+      stored(key(14), await encodeLoan({ operator: key(3), pool: key(2), nonce: 2n }), key(77)),
+    ])
+
+    const loans = await fetchAllOpenLoans(reader)
 
     expect(loans.map((l) => l.address.toBase58()).sort()).toEqual(
       [key(11), key(12)].map((k) => k.toBase58()).sort(),

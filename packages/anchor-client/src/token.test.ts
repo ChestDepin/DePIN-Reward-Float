@@ -3,7 +3,7 @@ import type { AccountInfo, PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 import type { ChainReader } from './accounts.ts'
 import { key } from './test-support.ts'
-import { fetchStableBalance, mintToInstruction } from './token.ts'
+import { fetchStableBalance, mintToInstruction, tokenAmount } from './token.ts'
 
 const owner = key(3)
 const mint = key(2)
@@ -54,6 +54,14 @@ describe('fetchStableBalance', () => {
     const chain = reader(new Map([[ata.toBase58(), info(Buffer.alloc(64))]]))
 
     await expect(fetchStableBalance(chain, owner, mint)).rejects.toThrow(/token account/)
+  })
+})
+
+describe('tokenAmount', () => {
+  it('reads the amount out of an account already fetched, missing as nothing', () => {
+    expect(tokenAmount(ata, info(tokenAccount(42n)))).toBe(42n)
+    expect(tokenAmount(ata, null)).toBe(0n)
+    expect(() => tokenAmount(ata, info(tokenAccount(5n), key(77)))).toThrow(/token program/)
   })
 })
 
