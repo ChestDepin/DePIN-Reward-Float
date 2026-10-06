@@ -49,6 +49,7 @@ describe.skipIf(url === undefined)('SC-001 — connecting a wallet until the lim
       db,
       logger: createLogger({ service: 'limit-latency', level: 'fatal' }),
       attestor: ATTESTOR,
+      rates: null,
       // Замір ходить у процесі, без браузера, тож жодне походження йому не
       // потрібне — але список порожнім бути не може.
       webOrigins: ['http://localhost:5173'],

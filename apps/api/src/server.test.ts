@@ -39,6 +39,7 @@ const deps = (logger: ReturnType<typeof createLogger>) => ({
   activity: NO_ACTIVITY,
   journal: NO_JOURNAL,
   attestor: ATTESTOR,
+  rates: null,
   webOrigins: ['http://localhost:5173'],
   now: () => new Date('2026-08-31T12:00:00.000Z'),
 })
@@ -173,6 +174,17 @@ describe('createServer', () => {
     await app.request('/v1/operators/4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy/limit')
 
     expect(JSON.stringify(lines)).toContain('10.0.0.4')
+  })
+
+  it('mounts the rate attestation under /v1 and says when rates are not set up', async () => {
+    const response = await createServer(deps(capture().logger)).request('/v1/attestations/rate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ rewardMint: '5pbCV2sjzLPiYoY48ic1kmS5juTpjeN27ProW6v3QFS' }),
+    })
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toMatchObject({ error: { code: 'DATA_UNAVAILABLE' } })
   })
 
   it('answers an unknown route in the shared error shape', async () => {

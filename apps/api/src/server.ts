@@ -10,6 +10,7 @@ import { DataUnavailable, errorBody } from './routes/errors.ts'
 import { createHealthRoutes, type PayoutActivitySource } from './routes/health.ts'
 import { type CreditProfileStore, createLimitRoutes } from './routes/limit.ts'
 import { createOperatorRoutes, type PayoutHistorySource } from './routes/operators.ts'
+import { createRateRoutes, type RateSource } from './routes/rate.ts'
 
 export type ServerDeps = {
   logger: Logger
@@ -18,6 +19,8 @@ export type ServerDeps = {
   activity: PayoutActivitySource
   journal: AttestationJournal
   attestor: Attestor
+  // null: the api runs without rates, and the rate endpoint says so.
+  rates: RateSource | null
   webOrigins: readonly string[]
   // Годинник параметром: період історії — останні 12 місяців, і тест на межі
   // місяця інакше падав би раз на місяць.
@@ -31,6 +34,7 @@ export function createServer({
   activity,
   journal,
   attestor,
+  rates,
   webOrigins,
   now,
 }: ServerDeps): Hono {
@@ -45,6 +49,7 @@ export function createServer({
   app.route('/v1', createOperatorRoutes({ payouts, now }))
   app.route('/v1', createLimitRoutes({ payouts, profiles, now }))
   app.route('/v1', createAttestationRoutes({ payouts, profiles, journal, attestor, now }))
+  app.route('/v1', createRateRoutes({ rates, attestor, now }))
 
   app.notFound((c) => c.json(errorBody('NOT_FOUND', 'route not found'), 404))
 

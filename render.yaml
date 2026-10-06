@@ -36,3 +36,13 @@ services:
       # https://<owner>.github.io
       - key: WEB_ORIGIN
         sync: false
+      # Rate attestations (FR-015b). All three or none: without them the api runs and
+      # the rate endpoint answers "rates are not set up".
+      # JUPITER_API_KEY: a free key from portal.jup.ag. MAINNET_RPC_URL: dates the price
+      # by its block. REWARD_MINTS: the devnet stand-ins, hivemapper:<mint>,helium:<mint>.
+      - key: JUPITER_API_KEY
+        sync: false
+      - key: MAINNET_RPC_URL
+        sync: false
+      - key: REWARD_MINTS
+        sync: false

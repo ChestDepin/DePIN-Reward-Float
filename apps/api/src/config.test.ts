@@ -23,6 +23,7 @@ describe('parseApiConfig', () => {
       attestorSecretKey: SECRET,
       attestorPublicKey: PUBLIC,
       webOrigins: ['https://app.example.com'],
+      rates: null,
     })
   })
 
@@ -99,5 +100,55 @@ describe('parseApiConfig', () => {
 
   it('rejects an unknown log level', () => {
     expect(() => parseApiConfig({ ...validEnv, LOG_LEVEL: 'chatty' })).toThrow(/LOG_LEVEL/)
+  })
+})
+
+describe('parseApiConfig: rates', () => {
+  const DEVNET_HONEY = '5pbCV2sjzLPiYoY48ic1kmS5juTpjeN27ProW6v3QFS'
+  const MAINNET_RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=live-key'
+  const rateEnv = {
+    JUPITER_API_KEY: 'jup-key',
+    MAINNET_RPC_URL,
+    REWARD_MINTS: `hivemapper:${DEVNET_HONEY}`,
+  }
+
+  it('reads the price source and the devnet stand-ins it prices', () => {
+    const { rates } = parseApiConfig({ ...validEnv, ...rateEnv })
+
+    expect(rates?.jupiterApiKey).toBe('jup-key')
+    expect(rates?.mainnetRpcUrl).toBe(MAINNET_RPC_URL)
+    expect(rates?.rewardMints.get('hivemapper')).toBe(DEVNET_HONEY)
+  })
+
+  // Render hands a variable that was never set as nothing, an .env line left as
+  // `NAME=` as "": both mean the api runs without rates, as the web runs without lending.
+  it('runs without rates when none of their variables is set', () => {
+    expect(parseApiConfig(validEnv).rates).toBeNull()
+    expect(
+      parseApiConfig({ ...validEnv, JUPITER_API_KEY: '', MAINNET_RPC_URL: '', REWARD_MINTS: '' })
+        .rates,
+    ).toBeNull()
+  })
+
+  it('refuses half a rate config and names what is missing', () => {
+    expect(() => parseApiConfig({ ...validEnv, JUPITER_API_KEY: 'jup-key' })).toThrow(
+      /MAINNET_RPC_URL[\s\S]*REWARD_MINTS/,
+    )
+  })
+
+  it('refuses a malformed list of stand-ins', () => {
+    expect(() =>
+      parseApiConfig({ ...validEnv, ...rateEnv, REWARD_MINTS: `hivemapper=${DEVNET_HONEY}` }),
+    ).toThrow(/REWARD_MINTS/)
+  })
+
+  it('never puts the key-bearing RPC url into the error', () => {
+    try {
+      parseApiConfig({ ...validEnv, ...rateEnv, MAINNET_RPC_URL: 'ftp://live-key@host' })
+      expect.unreachable('a non-http RPC url must throw')
+    } catch (error) {
+      expect(String(error)).not.toContain('live-key')
+      expect(String(error)).toContain('MAINNET_RPC_URL')
+    }
   })
 })
