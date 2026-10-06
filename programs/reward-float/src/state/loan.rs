@@ -91,6 +91,16 @@ impl Loan {
         ((u128::from(self.principal) * passed as u128).div_ceil(periods as u128)) as u64
     }
 
+    /// The most this loan can be owed within its term: interest up to the due date on
+    /// what is outstanding, as if nothing were repaid before it. Past the due date, the
+    /// debt as it is at `now`. The reward allowance is sized by it (FR-014a): it lasts
+    /// however the payouts come, and a sweep never takes more than the actual debt.
+    pub fn debt_ceiling(&self, now: i64) -> Result<u64> {
+        let mut until_due = self.clone();
+        until_due.accrue(self.due_at.max(now))?;
+        until_due.total_owed()
+    }
+
     /// Whether this loan still counts towards the operator's debt.
     pub fn is_open(&self) -> bool {
         !matches!(self.status, LoanStatus::Repaid)
@@ -477,6 +487,33 @@ mod tests {
             .accrue(T0 + 10 * SECONDS_PER_YEAR * 10_000)
             .unwrap_err();
         assert_eq!(code(err), code(error!(RewardFloatError::MathOverflow)));
+    }
+
+    #[test]
+    fn the_ceiling_within_the_term_is_the_debt_with_interest_to_the_due_date() {
+        let mut loan = accruing(1_000_000_000, 1_000);
+        loan.accrued_interest = 5;
+        loan.due_at = T0 + SECONDS_PER_YEAR;
+        assert_eq!(loan.debt_ceiling(T0).unwrap(), 1_100_000_005);
+        assert_eq!(
+            loan.debt_ceiling(T0 + SECONDS_PER_YEAR / 2).unwrap(),
+            1_100_000_005,
+            "within the term the ceiling does not move with time"
+        );
+        assert_eq!(
+            loan.last_accrual_at, T0,
+            "the loan itself is left as it was"
+        );
+    }
+
+    #[test]
+    fn past_the_due_date_the_ceiling_is_the_debt_as_it_is_now() {
+        let mut loan = accruing(1_000_000_000, 1_000);
+        loan.due_at = T0 + SECONDS_PER_YEAR / 2;
+        assert_eq!(
+            loan.debt_ceiling(T0 + SECONDS_PER_YEAR).unwrap(),
+            1_100_000_000
+        );
     }
 
     #[test]

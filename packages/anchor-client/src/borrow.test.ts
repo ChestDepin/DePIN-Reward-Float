@@ -1,6 +1,6 @@
 import { BorshCoder, type Idl, utils } from '@coral-xyz/anchor'
-import { issuedAttestationSchema } from '@drf/shared/api'
-import { signLimitAttestation } from '@drf/shared/attestation'
+import { issuedAttestationSchema, issuedRateAttestationSchema } from '@drf/shared/api'
+import { signLimitAttestation, signRateAttestation } from '@drf/shared/attestation'
 import { solanaAddressSchema } from '@drf/shared/schemas'
 import {
   Ed25519Program,
@@ -23,7 +23,7 @@ const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ
 const THIS_INSTRUCTION = 0xffff
 // The most loans an operator can hold while still being allowed one more.
 const WORST_CASE_OPEN_LOANS = 3
-const MEASURED_WORST_CASE_BYTES = 889
+const MEASURED_WORST_CASE_BYTES = 1112
 
 const attestorSecret = new Uint8Array(32).fill(21)
 const attestor = Keypair.fromSeed(attestorSecret).publicKey
@@ -60,6 +60,31 @@ async function issued(overrides: { wallet?: PublicKey; nonce?: bigint } = {}) {
   })
 }
 
+async function issuedRate(overrides: { mint?: PublicKey; signer?: Uint8Array } = {}) {
+  const mint = overrides.mint ?? rewardMint
+  const secret = overrides.signer ?? attestorSecret
+  const pricedAt = new Date('2026-10-03T10:00:00Z')
+  const expiresAt = new Date('2026-10-03T10:02:00Z')
+  const { message, signature } = await signRateAttestation(
+    {
+      rewardMint: solanaAddressSchema.parse(mint.toBase58()),
+      stablePerTrillionReward: 2_406_662n,
+      pricedAt,
+      expiresAt,
+    },
+    secret,
+  )
+  return issuedRateAttestationSchema.parse({
+    rewardMint: mint.toBase58(),
+    stablePerTrillionReward: '2406662',
+    attestor: Keypair.fromSeed(secret).publicKey.toBase58(),
+    message: utils.bytes.bs58.encode(message),
+    signature: utils.bytes.bs58.encode(signature),
+    pricedAt: pricedAt.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+  })
+}
+
 async function poolOnChain(trusted = attestor) {
   return {
     address: pool,
@@ -72,6 +97,7 @@ async function request(openLoans: readonly PublicKey[] = []) {
     operator,
     pool: await poolOnChain(),
     attestation: await issued(),
+    rate: await issuedRate(),
     openLoans,
     rewardMint,
     amount: 100_000_000n,
@@ -90,14 +116,54 @@ function at<T>(items: readonly T[], index: number): T {
 describe('borrow instructions', () => {
   const program = offlineProgram()
 
-  it('opens the destination, then the signed attestation, then borrow', async () => {
+  // borrow reads the limit right before it and the rate right before that; it approves
+  // the reward account itself, so no approve of the client's is in the transaction.
+  it('opens both accounts, then the signed rate, the signed limit and borrow', async () => {
     const instructions = await borrowInstructions(program, await request())
 
     expect(instructions.map((ix) => ix.programId.toBase58())).toEqual([
       ASSOCIATED_PROGRAM_ID.toBase58(),
+      ASSOCIATED_PROGRAM_ID.toBase58(),
+      Ed25519Program.programId.toBase58(),
       Ed25519Program.programId.toBase58(),
       rewardFloatProgramId.toBase58(),
     ])
+  })
+
+  // On devnet the stand-in reward token reaches an operator's wallet only once rewards
+  // arrive, and borrow needs the account to approve it.
+  it('creates the reward account idempotently', async () => {
+    const create = at(await borrowInstructions(program, await request()), 1)
+    const rewardAccount = utils.token.associatedAddress({ mint: rewardMint, owner: operator })
+
+    expect(create.data).toEqual(Buffer.from([1]))
+    expect(create.keys.map((k) => k.pubkey.toBase58())).toEqual(
+      [
+        operator,
+        rewardAccount,
+        operator,
+        rewardMint,
+        SystemProgram.programId,
+        TOKEN_PROGRAM_ID,
+      ].map((k) => k.toBase58()),
+    )
+  })
+
+  it('carries the signed rate and the attestor key inside its own ed25519 instruction', async () => {
+    const rate = await issuedRate()
+    const ed25519 = at(await borrowInstructions(program, await request()), 2)
+    const data = ed25519.data
+    const field = (n: number) => data.readUInt16LE(2 + 2 * n)
+
+    expect([field(1), field(3), field(6)]).toEqual([
+      THIS_INSTRUCTION,
+      THIS_INSTRUCTION,
+      THIS_INSTRUCTION,
+    ])
+    expect(data.subarray(field(2), field(2) + 32)).toEqual(attestor.toBuffer())
+    expect(data.subarray(field(4), field(4) + field(5))).toEqual(
+      Buffer.from(utils.bytes.bs58.decode(rate.message)),
+    )
   })
 
   it('creates the destination idempotently, so a second loan does not fail on it', async () => {
@@ -114,7 +180,7 @@ describe('borrow instructions', () => {
 
   it('carries the signed bytes and the attestor key inside the ed25519 instruction itself', async () => {
     const attestation = await issued()
-    const ed25519 = at(await borrowInstructions(program, await request()), 1)
+    const ed25519 = at(await borrowInstructions(program, await request()), 3)
     const data = ed25519.data
     const field = (n: number) => data.readUInt16LE(2 + 2 * n)
     const message = utils.bytes.bs58.decode(attestation.message)
@@ -131,7 +197,7 @@ describe('borrow instructions', () => {
 
   it('passes the arguments and accounts the program expects, open loans last', async () => {
     const openLoans = [key(11), key(12)]
-    const borrow = at(await borrowInstructions(program, await request(openLoans)), 2)
+    const borrow = at(await borrowInstructions(program, await request(openLoans)), 4)
 
     expect(coder.instruction.decode(borrow.data)).toMatchObject({
       name: 'borrow',
@@ -149,6 +215,11 @@ describe('borrow instructions', () => {
         true,
       ],
       [rewardMint.toBase58(), false, false],
+      [
+        utils.token.associatedAddress({ mint: rewardMint, owner: operator }).toBase58(),
+        false,
+        true,
+      ],
       [SYSVAR_INSTRUCTIONS_PUBKEY.toBase58(), false, false],
       [TOKEN_PROGRAM_ID.toBase58(), false, false],
       [SystemProgram.programId.toBase58(), false, false],
@@ -160,7 +231,7 @@ describe('borrow instructions', () => {
   // The client encodes through the camelCase IDL; the program was built from the raw
   // snake_case one. A field that one of them misses is encoded as zero, without an error.
   it('encodes the same bytes as a coder built from the raw IDL', async () => {
-    const borrow = at(await borrowInstructions(program, await request()), 2)
+    const borrow = at(await borrowInstructions(program, await request()), 4)
     const raw = new BorshCoder(rawIdl as Idl).instruction.decode(borrow.data)
 
     expect(raw?.name).toBe('borrow')
@@ -185,6 +256,21 @@ describe('borrow instructions', () => {
     const foreign = { ...(await request()), attestation: await issued({ wallet: key(31) }) }
 
     await expect(borrowInstructions(program, foreign)).rejects.toThrow(AttestationMismatch)
+  })
+
+  it('refuses a rate signed by a key the pool does not trust', async () => {
+    const stranger = {
+      ...(await request()),
+      rate: await issuedRate({ signer: new Uint8Array(32).fill(22) }),
+    }
+
+    await expect(borrowInstructions(program, stranger)).rejects.toThrow(AttestationMismatch)
+  })
+
+  it('refuses a rate for another reward token than the loan is repaid from', async () => {
+    const other = { ...(await request()), rate: await issuedRate({ mint: key(32) }) }
+
+    await expect(borrowInstructions(program, other)).rejects.toThrow(AttestationMismatch)
   })
 
   it('refuses an amount outside u64', async () => {

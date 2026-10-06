@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use anchor_lang::prelude::Pubkey;
 use anchor_lang::solana_program::program_pack::Pack;
 use anchor_lang::{AccountDeserialize, AccountSerialize, InstructionData, ToAccountMetas};
+use anchor_spl::associated_token::get_associated_token_address;
 use anchor_spl::token::spl_token;
 use common::{m, metas, mint_account, mollusk, token_account, wallet, LAMPORTS_PER_SOL};
 use ed25519_dalek::{Signer, SigningKey};
@@ -19,7 +20,7 @@ use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use reward_float::error::RewardFloatError;
-use reward_float::instructions::verify_attestation::LIMIT_ATTESTATION_TAG;
+use reward_float::instructions::verify_attestation::{LIMIT_ATTESTATION_TAG, RATE_ATTESTATION_TAG};
 use reward_float::{
     LenderShare, Loan, OperatorAccount, Pool, LOAN_SEED, MAX_OPEN_LOANS, MAX_TERM_PERIODS,
     OPERATOR_SEED, POOL_SEED, SECONDS_PER_YEAR, SHARE_SEED, VAULT_SEED,
@@ -37,6 +38,9 @@ const MAX_DEPOSITS: u64 = 1_000_000_000;
 const LIMIT_SPAN: u64 = 400_000_000;
 const BASE_APR_BPS: u16 = 800;
 const SLOPE_APR_BPS: u16 = 2_000;
+// Stablecoin base units for 10^12 reward base units. Any debt the pool can lend is worth
+// at least one reward unit at it, and none overflows the allowance.
+const RATE: u64 = 2_406_662;
 // Written out here rather than imported, so the model does not share the program's
 // arithmetic: interest for `dt` seconds is `outstanding · apr_bps · dt` over this.
 const DENOMINATOR: u128 = 10_000 * SECONDS_PER_YEAR as u128;
@@ -214,6 +218,7 @@ struct Operator {
     key: Pubkey,
     account: Pubkey,
     destination: Pubkey,
+    reward_account: Pubkey,
     next_nonce: u64,
     last_limit: Option<u64>,
 }
@@ -314,8 +319,10 @@ impl World {
             .map(|_| {
                 let key = Pubkey::new_unique();
                 let destination = Pubkey::new_unique();
+                let reward_account = get_associated_token_address(&key, &reward_mint);
                 store.insert(m(&key), wallet());
                 store.insert(m(&destination), token_account(&stable_mint, &key, 0));
+                store.insert(m(&reward_account), token_account(&reward_mint, &key, 0));
                 Operator {
                     key,
                     account: Pubkey::find_program_address(
@@ -324,6 +331,7 @@ impl World {
                     )
                     .0,
                     destination,
+                    reward_account,
                     next_nonce: 0,
                     last_limit: None,
                 }
@@ -474,13 +482,13 @@ impl World {
         let (passed, bypassed) = self.present_open_loans(operator, &open, bypass);
 
         let expected = if open.len() >= MAX_OPEN_LOANS as usize {
-            refused(1, RewardFloatError::TooManyOpenLoans)
+            refused(2, RewardFloatError::TooManyOpenLoans)
         } else if bypassed {
-            refused(1, RewardFloatError::OpenLoansMismatch)
+            refused(2, RewardFloatError::OpenLoansMismatch)
         } else if debt + amount > limit {
-            refused(1, RewardFloatError::CreditLimitExceeded)
+            refused(2, RewardFloatError::CreditLimitExceeded)
         } else if amount > free {
-            refused(1, RewardFloatError::InsufficientLiquidity)
+            refused(2, RewardFloatError::InsufficientLiquidity)
         } else {
             Ok(())
         };
@@ -488,6 +496,7 @@ impl World {
         let nonce = self.operators[operator].next_nonce;
         self.operators[operator].next_nonce += 1;
         let instructions = [
+            self.rate_attestation(),
             self.attestation(operator, limit, nonce),
             self.borrow_instruction(operator, nonce, amount, term_periods, &passed),
         ];
@@ -754,8 +763,6 @@ impl World {
         .0
     }
 
-    // The layout of solana's `new_ed25519_instruction`, every offset pointing into the
-    // instruction itself.
     fn attestation(&self, operator: usize, limit: u64, nonce: u64) -> Instruction {
         let mut message = LIMIT_ATTESTATION_TAG.to_vec();
         message.extend_from_slice(self.operators[operator].key.as_ref());
@@ -763,7 +770,22 @@ impl World {
         message.extend_from_slice(&(self.now - 60).to_le_bytes());
         message.extend_from_slice(&(self.now + 300).to_le_bytes());
         message.extend_from_slice(&nonce.to_le_bytes());
-        let signature = self.attestor.sign(&message).to_bytes();
+        self.signed(&message)
+    }
+
+    fn rate_attestation(&self) -> Instruction {
+        let mut message = RATE_ATTESTATION_TAG.to_vec();
+        message.extend_from_slice(self.reward_mint.as_ref());
+        message.extend_from_slice(&RATE.to_le_bytes());
+        message.extend_from_slice(&(self.now - 30).to_le_bytes());
+        message.extend_from_slice(&(self.now + 90).to_le_bytes());
+        self.signed(&message)
+    }
+
+    // The layout of solana's `new_ed25519_instruction`, every offset pointing into the
+    // instruction itself.
+    fn signed(&self, message: &[u8]) -> Instruction {
+        let signature = self.attestor.sign(message).to_bytes();
         let public_key_at: u16 = 16;
         let signature_at = public_key_at + 32;
         let message_at = signature_at + 64;
@@ -781,7 +803,7 @@ impl World {
         }
         data.extend_from_slice(self.attestor.verifying_key().as_bytes());
         data.extend_from_slice(&signature);
-        data.extend_from_slice(&message);
+        data.extend_from_slice(message);
         Instruction {
             program_id: m(&ed25519_program::ID),
             accounts: vec![],
@@ -807,6 +829,7 @@ impl World {
                 vault: self.vault,
                 destination: who.destination,
                 reward_mint: self.reward_mint,
+                reward_account: who.reward_account,
                 instructions: sysvar::instructions::ID,
                 token_program: spl_token::ID,
                 system_program: anchor_lang::system_program::ID,

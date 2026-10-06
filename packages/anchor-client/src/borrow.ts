@@ -1,5 +1,5 @@
 import { BN, type Program, utils } from '@coral-xyz/anchor'
-import type { IssuedAttestation } from '@drf/shared/api'
+import type { IssuedAttestation, IssuedRateAttestation } from '@drf/shared/api'
 import {
   Ed25519Program,
   PublicKey,
@@ -16,6 +16,8 @@ export type BorrowRequest = {
   operator: PublicKey
   pool: OnChain<PoolAccount>
   attestation: IssuedAttestation
+  // The reward token's rate (FR-015b): borrow sizes the reward allowance by it.
+  rate: IssuedRateAttestation
   // Every open loan of the operator, from openLoansForBorrow: borrow accrues them all
   // before it compares the debt with the limit.
   openLoans: readonly PublicKey[]
@@ -37,7 +39,7 @@ function u64(value: bigint): BN {
 // The program would refuse both, but only after the operator has signed and paid for
 // the transaction; after an attestor rotation (FR-012c) the first is expected, not rare.
 function checkAttestation(request: BorrowRequest): void {
-  const { attestation, pool, operator } = request
+  const { attestation, rate, pool, operator } = request
   if (!new PublicKey(attestation.attestor).equals(pool.account.attestor)) {
     throw new AttestationMismatch(
       `the attestation is signed by ${attestation.attestor}, the pool trusts ${pool.account.attestor.toBase58()}`,
@@ -48,28 +50,41 @@ function checkAttestation(request: BorrowRequest): void {
       `the attestation is issued to ${attestation.wallet}, not to ${operator.toBase58()}`,
     )
   }
+  if (!new PublicKey(rate.attestor).equals(pool.account.attestor)) {
+    throw new AttestationMismatch(
+      `the rate is signed by ${rate.attestor}, the pool trusts ${pool.account.attestor.toBase58()}`,
+    )
+  }
+  if (!new PublicKey(rate.rewardMint).equals(request.rewardMint)) {
+    throw new AttestationMismatch(
+      `the rate is for ${rate.rewardMint}, the loan is repaid from ${request.rewardMint.toBase58()}`,
+    )
+  }
 }
 
-// Three instructions, in this order: the destination account (FR-008 promises one
-// transaction even to an operator who never held the stablecoin), the attestor's
-// signature over the attestation, and borrow, which reads that signature from the
-// instruction right before it.
+function signatureCheck(signed: { attestor: string; message: string; signature: string }) {
+  return Ed25519Program.createInstructionWithPublicKey({
+    publicKey: new PublicKey(signed.attestor).toBytes(),
+    message: utils.bytes.bs58.decode(signed.message),
+    signature: utils.bytes.bs58.decode(signed.signature),
+  })
+}
+
+// Five instructions, in this order: the destination and the reward account (FR-008
+// promises one transaction even to an operator who never held either token), the
+// attestor's signatures over the rate and over the limit, and borrow, which reads the
+// limit from the instruction right before it and the rate from the one before that.
+// borrow approves the reward account itself, at the rate the loan actually gets.
 export async function borrowInstructions(
   program: Program<RewardFloat>,
   request: BorrowRequest,
 ): Promise<TransactionInstruction[]> {
   checkAttestation(request)
-  const { operator, pool, attestation } = request
+  const { operator, pool, attestation, rewardMint } = request
   const nonce = BigInt(attestation.nonce)
   const destination = utils.token.associatedAddress({
     mint: pool.account.stableMint,
     owner: operator,
-  })
-
-  const signature = Ed25519Program.createInstructionWithPublicKey({
-    publicKey: new PublicKey(attestation.attestor).toBytes(),
-    message: utils.bytes.bs58.decode(attestation.message),
-    signature: utils.bytes.bs58.decode(attestation.signature),
   })
 
   const borrow = await program.methods
@@ -87,7 +102,8 @@ export async function borrowInstructions(
       loan: loanAddress(operator, nonce),
       vault: pool.account.vault,
       destination,
-      rewardMint: request.rewardMint,
+      rewardMint,
+      rewardAccount: utils.token.associatedAddress({ mint: rewardMint, owner: operator }),
       instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
       tokenProgram: utils.token.TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
@@ -103,7 +119,9 @@ export async function borrowInstructions(
       owner: operator,
       mint: pool.account.stableMint,
     }),
-    signature,
+    createAssociatedTokenAccountIdempotent({ payer: operator, owner: operator, mint: rewardMint }),
+    signatureCheck(request.rate),
+    signatureCheck(attestation),
     borrow,
   ]
 }

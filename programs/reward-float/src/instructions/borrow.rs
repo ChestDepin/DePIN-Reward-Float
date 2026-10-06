@@ -1,16 +1,19 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program::{self, Allocate, Assign, CreateAccount};
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::token::{self, Approve, Mint, Token, TokenAccount, Transfer};
 use solana_sdk_ids::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
 use crate::error::RewardFloatError;
-use crate::instructions::verify_attestation::verify_limit_attestation;
+use crate::instructions::verify_attestation::{verify_limit_attestation, verify_rate_attestation};
 use crate::state::{
     Loan, LoanStatus, OperatorAccount, Pool, LOAN_SEED, MAX_OPEN_LOANS, MAX_TERM_PERIODS,
     OPERATOR_SEED, POOL_SEED, REPAYMENT_PERIOD,
 };
 
 const BASIS_POINTS: u16 = 10_000;
+
+// The rate is in stablecoin base units for this many reward base units.
+const RATE_UNIT: u128 = 1_000_000_000_000;
 
 #[derive(Accounts)]
 #[instruction(nonce: u64)]
@@ -50,6 +53,15 @@ pub struct Borrow<'info> {
     pub destination: Box<Account<'info, TokenAccount>>,
 
     pub reward_mint: Box<Account<'info, Mint>>,
+
+    // Where the rewards the loan is repaid from arrive. A loan does not go out without
+    // the protocol's permission on it: that permission is the collateral (FR-014).
+    #[account(
+        mut,
+        associated_token::mint = reward_mint,
+        associated_token::authority = operator,
+    )]
+    pub reward_account: Box<Account<'info, TokenAccount>>,
 
     /// CHECK: pinned to the instructions sysvar, and only read through its helpers.
     #[account(address = INSTRUCTIONS_ID)]
@@ -91,6 +103,13 @@ pub fn handle_borrow(
         attestation.nonce == nonce,
         RewardFloatError::AttestationNonceMismatch
     );
+    let reward_mint = ctx.accounts.reward_mint.key();
+    let rate = verify_rate_attestation(
+        &ctx.accounts.instructions.to_account_info(),
+        &ctx.accounts.pool.attestor,
+        &reward_mint,
+        now,
+    )?;
 
     let pool = &mut ctx.accounts.pool;
     let account = &mut ctx.accounts.operator_account;
@@ -104,11 +123,12 @@ pub fn handle_borrow(
         account.open_loans < MAX_OPEN_LOANS,
         RewardFloatError::TooManyOpenLoans
     );
-    let accrued = accrue_open_loans(
+    let (accrued, reward_ceiling) = accrue_open_loans(
         ctx.remaining_accounts,
         &operator,
         pool,
         account.open_loans,
+        &reward_mint,
         now,
     )?;
     account.total_debt = account
@@ -159,7 +179,7 @@ pub fn handle_borrow(
     let loan = Loan {
         operator,
         pool: pool.key(),
-        reward_mint: ctx.accounts.reward_mint.key(),
+        reward_mint,
         nonce,
         principal: amount,
         outstanding: amount,
@@ -175,6 +195,31 @@ pub fn handle_borrow(
     };
     pool.track(&loan)?;
     loan.try_serialize(&mut &mut ctx.accounts.loan.try_borrow_mut_data()?[..])?;
+
+    // FR-014a by construction: the allowance is the debt of every open loan repaid from
+    // this token, each at the rate it was actually issued at, converted at the attested
+    // rate and rounded down. One account has one delegate, so it covers them all.
+    let ceiling = reward_ceiling
+        .checked_add(loan.debt_ceiling(now)?)
+        .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
+    let allowance = u64::try_from(
+        u128::from(ceiling) * RATE_UNIT / u128::from(rate.stable_per_trillion_reward),
+    )
+    .map_err(|_| error!(RewardFloatError::MathOverflow))?;
+    require!(allowance > 0, RewardFloatError::DelegationTooSmall);
+    // The operator signs borrow, and the signature carries into the call: the same one
+    // approval the operator would otherwise give the token program directly.
+    token::approve(
+        CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            Approve {
+                to: ctx.accounts.reward_account.to_account_info(),
+                delegate: ctx.accounts.operator_account.to_account_info(),
+                authority: ctx.accounts.operator.to_account_info(),
+            },
+        ),
+        allowance,
+    )?;
 
     let stable_mint = pool.stable_mint;
     let signer: &[&[&[u8]]] = &[&[POOL_SEED, stable_mint.as_ref(), &[pool.bump]]];
@@ -196,20 +241,23 @@ pub fn handle_borrow(
 // brought up to this second before the limit is checked. `open_loans` is what makes
 // "every" checkable: as many distinct open loans of this operator as it counts.
 // Loans of another pool are refused rather than skipped, since their interest belongs
-// on that pool's books, which this transaction does not hold.
+// on that pool's books, which this transaction does not hold. Returns the interest booked
+// and the debt ceiling of the loans repaid from `reward_mint`.
 fn accrue_open_loans(
     loans: &[AccountInfo],
     operator: &Pubkey,
     pool: &mut Account<Pool>,
     open_loans: u32,
+    reward_mint: &Pubkey,
     now: i64,
-) -> Result<u64> {
+) -> Result<(u64, u64)> {
     let pool_key = pool.key();
     require!(
         loans.len() == open_loans as usize,
         RewardFloatError::OpenLoansMismatch
     );
     let mut accrued: u64 = 0;
+    let mut ceiling: u64 = 0;
     for (index, info) in loans.iter().enumerate() {
         require!(
             info.is_writable
@@ -229,9 +277,14 @@ fn accrue_open_loans(
             .checked_add(loan.accrue(now)?)
             .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
         pool.track(&loan)?;
+        if loan.reward_mint == *reward_mint {
+            ceiling = ceiling
+                .checked_add(loan.debt_ceiling(now)?)
+                .ok_or_else(|| error!(RewardFloatError::MathOverflow))?;
+        }
         loan.try_serialize(&mut &mut data[..])?;
     }
-    Ok(accrued)
+    Ok((accrued, ceiling))
 }
 
 // What Anchor's `init` does, moved behind the nonce check. The address is known in

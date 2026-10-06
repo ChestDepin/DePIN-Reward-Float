@@ -1,14 +1,16 @@
 mod common;
 
 use anchor_lang::prelude::Pubkey;
+use anchor_lang::solana_program::program_option::COption;
 use anchor_lang::solana_program::program_pack::Pack;
 use anchor_lang::{AccountDeserialize, AccountSerialize, InstructionData, ToAccountMetas};
+use anchor_spl::associated_token::get_associated_token_address;
 use anchor_spl::token::spl_token;
 use common::{m, metas, mint_account, mollusk, token_account, track, wallet, LAMPORTS_PER_SOL};
 use ed25519_dalek::{Signer, SigningKey};
 use mollusk_svm::result::types::{TransactionProgramResult, TransactionResult};
 use reward_float::error::RewardFloatError;
-use reward_float::instructions::verify_attestation::LIMIT_ATTESTATION_TAG;
+use reward_float::instructions::verify_attestation::{LIMIT_ATTESTATION_TAG, RATE_ATTESTATION_TAG};
 use reward_float::{
     Loan, LoanStatus, OperatorAccount, Pool, LOAN_SEED, MAX_OPEN_LOANS, NONCE_WINDOW_WORDS,
     OPERATOR_SEED, POOL_SEED, REPAYMENT_PERIOD, SECONDS_PER_YEAR, VAULT_SEED,
@@ -24,9 +26,15 @@ const LIMIT: u64 = 150_000_000;
 const AMOUNT: u64 = 100_000_000;
 // 800 base + 2000 × 10 % utilisation once AMOUNT is out.
 const APR: u16 = 1_000;
+// Stablecoin base units for 10^12 reward base units: 1000 HONEY for 2.406662 USDC.
+const RATE: u64 = 2_406_662;
+// AMOUNT plus 1 000 bps on it over three periods, 102 465 753, at RATE; worked out in
+// Python, not by the code under test.
+const FIRST_ALLOWANCE: u64 = 42_575_880_202_537;
 
-// Position of borrow in the transaction, right after its ed25519 check.
-const BORROW: usize = 1;
+// Position of borrow in the transaction, after the rate's and then the limit's ed25519
+// checks.
+const BORROW: usize = 2;
 
 type Outcome = Result<(), (usize, InstructionError)>;
 
@@ -82,6 +90,82 @@ fn token_balance(result: &TransactionResult, key: &Pubkey) -> u64 {
         .amount
 }
 
+// The layout of solana's `new_ed25519_instruction`, every offset pointing into the
+// instruction itself.
+fn ed25519_instruction(signer: &SigningKey, message: &[u8], forged: bool) -> Instruction {
+    let mut signature = signer.sign(message).to_bytes();
+    if forged {
+        signature[0] ^= 1;
+    }
+    let public_key_at: u16 = 16;
+    let signature_at = public_key_at + 32;
+    let message_at = signature_at + 64;
+    let mut data = vec![1, 0];
+    for field in [
+        signature_at,
+        u16::MAX,
+        public_key_at,
+        u16::MAX,
+        message_at,
+        message.len() as u16,
+        u16::MAX,
+    ] {
+        data.extend_from_slice(&field.to_le_bytes());
+    }
+    data.extend_from_slice(signer.verifying_key().as_bytes());
+    data.extend_from_slice(&signature);
+    data.extend_from_slice(message);
+    Instruction {
+        program_id: m(&ed25519_program::ID),
+        accounts: vec![],
+        data,
+    }
+}
+
+struct Rate {
+    signer: SigningKey,
+    mint: Pubkey,
+    rate: u64,
+    priced_at: i64,
+    expires_at: i64,
+}
+
+impl Rate {
+    fn message(&self) -> Vec<u8> {
+        let mut message = RATE_ATTESTATION_TAG.to_vec();
+        message.extend_from_slice(self.mint.as_ref());
+        message.extend_from_slice(&self.rate.to_le_bytes());
+        message.extend_from_slice(&self.priced_at.to_le_bytes());
+        message.extend_from_slice(&self.expires_at.to_le_bytes());
+        message
+    }
+}
+
+fn reward_token_account(mint: &Pubkey, owner: &Pubkey, delegate: Option<(Pubkey, u64)>) -> Account {
+    let mut data = vec![0; spl_token::state::Account::LEN];
+    spl_token::state::Account::pack(
+        spl_token::state::Account {
+            mint: *mint,
+            owner: *owner,
+            amount: 0,
+            delegate: delegate.map_or(COption::None, |(key, _)| COption::Some(key)),
+            state: spl_token::state::AccountState::Initialized,
+            is_native: COption::None,
+            delegated_amount: delegate.map_or(0, |(_, amount)| amount),
+            close_authority: COption::None,
+        },
+        &mut data,
+    )
+    .unwrap();
+    Account {
+        lamports: LAMPORTS_PER_SOL,
+        data,
+        owner: m(&spl_token::ID),
+        executable: false,
+        rent_epoch: 0,
+    }
+}
+
 struct Attestation {
     signer: SigningKey,
     operator: Pubkey,
@@ -100,39 +184,6 @@ impl Attestation {
         message.extend_from_slice(&self.expires_at.to_le_bytes());
         message.extend_from_slice(&self.nonce.to_le_bytes());
         message
-    }
-
-    // The layout of solana's `new_ed25519_instruction`, every offset pointing into the
-    // instruction itself.
-    fn ed25519_instruction(&self, forged: bool) -> Instruction {
-        let message = self.message();
-        let mut signature = self.signer.sign(&message).to_bytes();
-        if forged {
-            signature[0] ^= 1;
-        }
-        let public_key_at: u16 = 16;
-        let signature_at = public_key_at + 32;
-        let message_at = signature_at + 64;
-        let mut data = vec![1, 0];
-        for field in [
-            signature_at,
-            u16::MAX,
-            public_key_at,
-            u16::MAX,
-            message_at,
-            message.len() as u16,
-            u16::MAX,
-        ] {
-            data.extend_from_slice(&field.to_le_bytes());
-        }
-        data.extend_from_slice(self.signer.verifying_key().as_bytes());
-        data.extend_from_slice(&signature);
-        data.extend_from_slice(&message);
-        Instruction {
-            program_id: m(&ed25519_program::ID),
-            accounts: vec![],
-            data,
-        }
     }
 }
 
@@ -163,7 +214,11 @@ struct Setup {
     // Passed after the named accounts, as `borrow` expects every open loan to be.
     open_loans: Vec<(Pubkey, Account, bool)>,
     attestation: Attestation,
-    signature_check_first: bool,
+    rate: Rate,
+    limit_check: bool,
+    rate_check: bool,
+    reward_account: Pubkey,
+    reward_account_state: Account,
     forged: bool,
     now: i64,
     nonce: u64,
@@ -181,10 +236,11 @@ impl Setup {
         let (pool, pool_bump) =
             Pubkey::find_program_address(&[POOL_SEED, stable_mint.as_ref()], &reward_float::ID);
         let vault = Pubkey::find_program_address(&[VAULT_SEED, pool.as_ref()], &reward_float::ID).0;
+        let reward_mint = Pubkey::new_unique();
         Self {
             signer: operator,
             stable_mint,
-            reward_mint: Pubkey::new_unique(),
+            reward_mint,
             pool,
             pool_state: Pool {
                 authority: Pubkey::new_unique(),
@@ -211,14 +267,24 @@ impl Setup {
             loan_account: Account::default(),
             open_loans: Vec::new(),
             attestation: Attestation {
-                signer: attestor,
+                signer: attestor.clone(),
                 operator,
                 limit: LIMIT,
                 computed_at: NOW - 60,
                 expires_at: NOW + 300,
                 nonce: 7,
             },
-            signature_check_first: true,
+            rate: Rate {
+                signer: attestor.clone(),
+                mint: reward_mint,
+                rate: RATE,
+                priced_at: NOW - 30,
+                expires_at: NOW + 90,
+            },
+            limit_check: true,
+            rate_check: true,
+            reward_account: get_associated_token_address(&operator, &reward_mint),
+            reward_account_state: reward_token_account(&reward_mint, &operator, None),
             forged: false,
             now: NOW,
             nonce: 7,
@@ -288,6 +354,7 @@ impl Setup {
             vault: self.vault,
             destination: self.destination,
             reward_mint: self.reward_mint,
+            reward_account: self.reward_account,
             instructions: sysvar::instructions::ID,
             token_program: spl_token::ID,
             system_program: anchor_lang::system_program::ID,
@@ -321,8 +388,19 @@ impl Setup {
     // fills the instructions sysvar and its current index the way it does on chain.
     fn run(&self) -> TransactionResult {
         let mut instructions = Vec::new();
-        if self.signature_check_first {
-            instructions.push(self.attestation.ed25519_instruction(self.forged));
+        if self.rate_check {
+            instructions.push(ed25519_instruction(
+                &self.rate.signer,
+                &self.rate.message(),
+                false,
+            ));
+        }
+        if self.limit_check {
+            instructions.push(ed25519_instruction(
+                &self.attestation.signer,
+                &self.attestation.message(),
+                self.forged,
+            ));
         }
         instructions.push(self.instruction());
         let operator_account = match &self.operator_state {
@@ -343,6 +421,7 @@ impl Setup {
                 token_account(&self.destination_mint, &self.signer, 0),
             ),
             (m(&self.reward_mint), mint_account()),
+            (m(&self.reward_account), self.reward_account_state.clone()),
             mollusk_svm_programs_token::token::keyed_account(),
             mollusk_svm::program::keyed_account_for_system_program(),
         ];
@@ -362,10 +441,11 @@ fn the_first_loan_opens_the_operator_account_and_fixes_the_terms() {
     let setup = Setup::first_loan();
     let result = setup.run();
     assert_eq!(outcome(&result), Ok(()));
-    // Measured at 25 393 for the whole transaction. The ceiling leaves room for the
-    // bump searches of the two new PDAs, which cost more or less depending on the keys.
+    // Measured at 42 792 for the whole transaction: the rate check, the bump search of
+    // the reward account's address and the approve call added 17 399 to it. The ceiling
+    // leaves room for the bump searches, which cost more or less depending on the keys.
     println!("borrow, first loan: {} CU", result.compute_units_consumed);
-    assert!(result.compute_units_consumed <= 40_000);
+    assert!(result.compute_units_consumed <= 60_000);
 
     let loan: Loan = deserialize(&result, &setup.loan());
     let loan_bump = Pubkey::find_program_address(
@@ -410,6 +490,135 @@ fn the_first_loan_opens_the_operator_account_and_fixes_the_terms() {
 
     assert_eq!(token_balance(&result, &setup.vault), DEPOSITS - AMOUNT);
     assert_eq!(token_balance(&result, &setup.destination), AMOUNT);
+    assert_eq!(
+        delegation(&result, &setup.reward_account),
+        Some((setup.operator_account(), FIRST_ALLOWANCE))
+    );
+}
+
+fn delegation(result: &TransactionResult, key: &Pubkey) -> Option<(Pubkey, u64)> {
+    let state = spl_token::state::Account::unpack(&account(result, key).data).unwrap();
+    match state.delegate {
+        COption::Some(delegate) => Some((delegate, state.delegated_amount)),
+        COption::None => None,
+    }
+}
+
+#[test]
+fn the_allowance_follows_the_rate_the_loan_got_not_the_most_the_operator_agreed_to() {
+    // FR-014a: what is owed is at the rate fixed at issue. Sizing the allowance by the
+    // ceiling the operator signed would let it outgrow the debt whenever the pool quotes
+    // less than that.
+    let mut setup = Setup::first_loan();
+    setup.max_apr_bps = u16::MAX;
+    let result = setup.run();
+    assert_eq!(outcome(&result), Ok(()));
+    assert_eq!(
+        delegation(&result, &setup.reward_account),
+        Some((setup.operator_account(), FIRST_ALLOWANCE))
+    );
+}
+
+#[test]
+fn another_protocol_s_delegate_is_replaced_by_ours() {
+    // The page asks the operator before this (T045); the program only sees the signature.
+    let mut setup = Setup::first_loan();
+    setup.reward_account_state = reward_token_account(
+        &setup.reward_mint,
+        &setup.signer,
+        Some((Pubkey::new_unique(), 5)),
+    );
+    let result = setup.run();
+    assert_eq!(outcome(&result), Ok(()));
+    assert_eq!(
+        delegation(&result, &setup.reward_account),
+        Some((setup.operator_account(), FIRST_ALLOWANCE))
+    );
+}
+
+#[test]
+fn the_reward_account_has_to_be_the_operator_s_own_for_the_loan_s_token() {
+    // An account at the operator's associated address of another mint cannot exist: only
+    // the associated token program creates one there, and with that mint.
+    let cases: [fn(&mut Setup); 2] = [
+        |s| s.reward_account = Pubkey::new_unique(),
+        |s| {
+            s.reward_account_state =
+                reward_token_account(&s.reward_mint, &Pubkey::new_unique(), None)
+        },
+    ];
+    for change in cases {
+        let mut setup = Setup::first_loan();
+        change(&mut setup);
+        let Err((at, _)) = outcome(&setup.run()) else {
+            panic!("a loan went out against someone else's rewards");
+        };
+        assert_eq!(at, BORROW);
+    }
+}
+
+#[test]
+fn without_a_rate_borrow_is_refused() {
+    let mut setup = Setup::first_loan();
+    setup.rate_check = false;
+    let missing: u32 = RewardFloatError::AttestationMissing.into();
+    assert_eq!(
+        outcome(&setup.run()),
+        Err((1, InstructionError::Custom(missing)))
+    );
+}
+
+#[test]
+fn a_rate_signed_by_another_key_is_refused() {
+    let mut setup = Setup::first_loan();
+    setup.rate.signer = SigningKey::from_bytes(&[2; 32]);
+    assert_eq!(
+        outcome(&setup.run()),
+        refused(RewardFloatError::AttestationWrongSigner)
+    );
+}
+
+#[test]
+fn a_rate_for_another_token_is_refused() {
+    let mut setup = Setup::first_loan();
+    setup.rate.mint = Pubkey::new_unique();
+    assert_eq!(
+        outcome(&setup.run()),
+        refused(RewardFloatError::RateAttestationWrongMint)
+    );
+}
+
+#[test]
+fn a_rate_priced_more_than_ten_minutes_ago_is_refused() {
+    let mut setup = Setup::first_loan();
+    setup.rate.priced_at = NOW - 601;
+    assert_eq!(
+        outcome(&setup.run()),
+        refused(RewardFloatError::RateAttestationStale)
+    );
+}
+
+#[test]
+fn a_debt_worth_less_than_one_reward_unit_is_refused_rather_than_unsecured() {
+    // A zero allowance would leave the loan with nothing to be repaid from.
+    let mut setup = Setup::first_loan();
+    setup.amount = 1;
+    setup.rate.rate = u64::MAX;
+    setup.max_apr_bps = u16::MAX;
+    assert_eq!(
+        outcome(&setup.run()),
+        refused(RewardFloatError::DelegationTooSmall)
+    );
+}
+
+#[test]
+fn an_allowance_beyond_u64_fails_loud_instead_of_wrapping() {
+    let mut setup = Setup::first_loan();
+    setup.rate.rate = 1;
+    assert_eq!(
+        outcome(&setup.run()),
+        refused(RewardFloatError::MathOverflow)
+    );
 }
 
 #[test]
@@ -440,6 +649,37 @@ fn a_later_loan_adds_to_the_debt_and_may_reach_the_limit_exactly() {
     assert_eq!(loan.apr_bps, 1_100);
     let pool: Pool = deserialize(&result, &setup.pool);
     assert_eq!(pool.total_borrowed, LIMIT);
+    // One account, one delegate: the allowance covers both loans repaid from it, the old
+    // one at 1 000 bps (102 438 356) and the new one at 1 100 (51 356 164).
+    assert_eq!(
+        delegation(&result, &setup.reward_account),
+        Some((setup.operator_account(), 63_903_664_079_127))
+    );
+}
+
+#[test]
+fn an_open_loan_repaid_from_another_token_is_not_in_the_allowance() {
+    let mut setup = Setup::first_loan();
+    let mut existing = fresh_operator_account(setup.signer);
+    existing.total_debt = AMOUNT;
+    existing.open_loans = 1;
+    existing.used_nonces[0] = 1 << 7;
+    setup.operator_state = Some(existing);
+    let mut other = setup.existing_loan(7, AMOUNT);
+    other.reward_mint = Pubkey::new_unique();
+    setup.pass_open_loan(&other);
+    setup.pool_state.total_borrowed = AMOUNT;
+    setup.vault_balance = DEPOSITS - AMOUNT;
+    setup.attestation.nonce = 8;
+    setup.nonce = 8;
+    setup.amount = LIMIT - AMOUNT;
+    setup.max_apr_bps = 1_100;
+    let result = setup.run();
+    assert_eq!(outcome(&result), Ok(()));
+    assert_eq!(
+        delegation(&result, &setup.reward_account),
+        Some((setup.operator_account(), 21_339_167_693_676))
+    );
 }
 
 #[test]
@@ -539,9 +779,10 @@ fn the_loan_nonce_has_to_be_the_attested_one() {
 }
 
 #[test]
-fn without_the_signature_check_right_before_it_borrow_is_refused() {
+fn without_any_signature_check_before_it_borrow_is_refused() {
     let mut setup = Setup::first_loan();
-    setup.signature_check_first = false;
+    setup.limit_check = false;
+    setup.rate_check = false;
     let result = setup.run();
     let missing: u32 = RewardFloatError::AttestationMissing.into();
     assert_eq!(
@@ -565,6 +806,8 @@ fn an_attestation_signed_by_another_key_is_refused() {
 fn another_wallet_cannot_borrow_against_an_operator_s_attestation() {
     let mut setup = Setup::first_loan();
     setup.signer = Pubkey::new_unique();
+    setup.reward_account = get_associated_token_address(&setup.signer, &setup.reward_mint);
+    setup.reward_account_state = reward_token_account(&setup.reward_mint, &setup.signer, None);
     let result = setup.run();
     assert_eq!(
         outcome(&result),
@@ -614,7 +857,7 @@ fn a_forged_signature_fails_the_transaction_in_the_precompile() {
         panic!("a forged signature went through");
     };
     assert_eq!(
-        at, 0,
+        at, 1,
         "the ed25519 check itself refuses, before borrow runs"
     );
     assert_eq!(account(&result, &setup.loan()).data.len(), 0);
@@ -637,6 +880,9 @@ fn replaying_a_spent_attestation_is_refused_by_the_nonce_mask() {
     replay.destination_mint = setup.stable_mint;
     replay.pool = setup.pool;
     replay.vault = setup.vault;
+    replay.rate.mint = setup.reward_mint;
+    replay.reward_account = setup.reward_account;
+    replay.reward_account_state = account(&first, &setup.reward_account).clone();
     replay.pool_state = deserialize(&first, &setup.pool);
     replay.vault_balance = token_balance(&first, &setup.vault);
     replay.operator_state = Some(deserialize(&first, &setup.operator_account()));
@@ -789,7 +1035,7 @@ fn a_loan_up_to_the_limit_books_the_interest_of_the_open_ones_first() {
         "borrow, one open loan: {} CU",
         result.compute_units_consumed
     );
-    assert!(result.compute_units_consumed <= 40_000);
+    assert!(result.compute_units_consumed <= 60_000);
 
     let operator: OperatorAccount = deserialize(&result, &setup.operator_account());
     assert_eq!((operator.total_debt, operator.open_loans), (LIMIT, 2));
@@ -926,7 +1172,7 @@ fn the_last_loan_under_the_maximum_stays_within_budget() {
         "borrow, three open loans: {} CU",
         result.compute_units_consumed
     );
-    assert!(result.compute_units_consumed <= 40_000);
+    assert!(result.compute_units_consumed <= 60_000);
     let operator: OperatorAccount = deserialize(&result, &setup.operator_account());
     assert_eq!(operator.open_loans, MAX_OPEN_LOANS);
 }

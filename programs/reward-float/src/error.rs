@@ -17,12 +17,12 @@ pub enum RewardFloatError {
     #[msg("the attestor key cannot be the all-zero key")]
     InvalidAttestor,
     #[msg(
-        "the instruction right before this one must be the ed25519 check of a limit attestation"
+        "borrow must come right after the ed25519 checks of the rate and then the limit attestation"
     )]
     AttestationMissing,
-    #[msg("the limit attestation or its ed25519 check is not laid out as expected")]
+    #[msg("an attestation or its ed25519 check is not laid out as expected")]
     AttestationMalformed,
-    #[msg("the limit attestation is not signed by the pool attestor")]
+    #[msg("an attestation is not signed by the pool attestor")]
     AttestationWrongSigner,
     #[msg("the limit attestation was issued for another operator")]
     AttestationWrongOperator,
@@ -58,4 +58,14 @@ pub enum RewardFloatError {
     TooManyOpenLoans,
     #[msg("the deposit is worth less than one share of the pool")]
     DepositTooSmall,
+    #[msg("the rate attestation is for another reward token than the loan's")]
+    RateAttestationWrongMint,
+    #[msg("the rate attestation has expired")]
+    RateAttestationExpired,
+    #[msg("the rate attestation claims to stay valid for longer than the program allows")]
+    RateAttestationValidityTooLong,
+    #[msg("the rate attestation was priced more than ten minutes ago")]
+    RateAttestationStale,
+    #[msg("at the attested rate the debt is worth less than one base unit of the reward token")]
+    DelegationTooSmall,
 }

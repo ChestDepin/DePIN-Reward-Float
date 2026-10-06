@@ -95,6 +95,96 @@ export type RewardFloat = {
           "name": "rewardMint"
         },
         {
+          "name": "rewardAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "operator"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "rewardMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
           "name": "instructions",
           "address": "Sysvar1nstructions1111111111111111111111111"
         },
@@ -578,17 +668,17 @@ export type RewardFloat = {
     {
       "code": 6006,
       "name": "attestationMissing",
-      "msg": "the instruction right before this one must be the ed25519 check of a limit attestation"
+      "msg": "borrow must come right after the ed25519 checks of the rate and then the limit attestation"
     },
     {
       "code": 6007,
       "name": "attestationMalformed",
-      "msg": "the limit attestation or its ed25519 check is not laid out as expected"
+      "msg": "an attestation or its ed25519 check is not laid out as expected"
     },
     {
       "code": 6008,
       "name": "attestationWrongSigner",
-      "msg": "the limit attestation is not signed by the pool attestor"
+      "msg": "an attestation is not signed by the pool attestor"
     },
     {
       "code": 6009,
@@ -674,6 +764,31 @@ export type RewardFloat = {
       "code": 6025,
       "name": "depositTooSmall",
       "msg": "the deposit is worth less than one share of the pool"
+    },
+    {
+      "code": 6026,
+      "name": "rateAttestationWrongMint",
+      "msg": "the rate attestation is for another reward token than the loan's"
+    },
+    {
+      "code": 6027,
+      "name": "rateAttestationExpired",
+      "msg": "the rate attestation has expired"
+    },
+    {
+      "code": 6028,
+      "name": "rateAttestationValidityTooLong",
+      "msg": "the rate attestation claims to stay valid for longer than the program allows"
+    },
+    {
+      "code": 6029,
+      "name": "rateAttestationStale",
+      "msg": "the rate attestation was priced more than ten minutes ago"
+    },
+    {
+      "code": 6030,
+      "name": "delegationTooSmall",
+      "msg": "at the attested rate the debt is worth less than one base unit of the reward token"
     }
   ],
   "types": [
@@ -998,6 +1113,96 @@ export const rewardFloatIdl: RewardFloat = {
           "name": "rewardMint"
         },
         {
+          "name": "rewardAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "operator"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "rewardMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
           "name": "instructions",
           "address": "Sysvar1nstructions1111111111111111111111111"
         },
@@ -1481,17 +1686,17 @@ export const rewardFloatIdl: RewardFloat = {
     {
       "code": 6006,
       "name": "attestationMissing",
-      "msg": "the instruction right before this one must be the ed25519 check of a limit attestation"
+      "msg": "borrow must come right after the ed25519 checks of the rate and then the limit attestation"
     },
     {
       "code": 6007,
       "name": "attestationMalformed",
-      "msg": "the limit attestation or its ed25519 check is not laid out as expected"
+      "msg": "an attestation or its ed25519 check is not laid out as expected"
     },
     {
       "code": 6008,
       "name": "attestationWrongSigner",
-      "msg": "the limit attestation is not signed by the pool attestor"
+      "msg": "an attestation is not signed by the pool attestor"
     },
     {
       "code": 6009,
@@ -1577,6 +1782,31 @@ export const rewardFloatIdl: RewardFloat = {
       "code": 6025,
       "name": "depositTooSmall",
       "msg": "the deposit is worth less than one share of the pool"
+    },
+    {
+      "code": 6026,
+      "name": "rateAttestationWrongMint",
+      "msg": "the rate attestation is for another reward token than the loan's"
+    },
+    {
+      "code": 6027,
+      "name": "rateAttestationExpired",
+      "msg": "the rate attestation has expired"
+    },
+    {
+      "code": 6028,
+      "name": "rateAttestationValidityTooLong",
+      "msg": "the rate attestation claims to stay valid for longer than the program allows"
+    },
+    {
+      "code": 6029,
+      "name": "rateAttestationStale",
+      "msg": "the rate attestation was priced more than ten minutes ago"
+    },
+    {
+      "code": 6030,
+      "name": "delegationTooSmall",
+      "msg": "at the attested rate the debt is worth less than one base unit of the reward token"
     }
   ],
   "types": [

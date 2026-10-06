@@ -26,6 +26,89 @@ pub const MAX_REMAINING_VALIDITY: i64 = 10 * 60;
 /// How old the data behind a limit may be, in seconds (FR-007).
 pub const MAX_LIMIT_AGE: i64 = 24 * 60 * 60;
 
+/// First eight bytes of a signed rate attestation (FR-015b), as `packages/shared` writes
+/// them.
+pub const RATE_ATTESTATION_TAG: &[u8; 8] = b"drf:rat1";
+
+/// Tag, reward mint, rate, priced at, expires at.
+pub const RATE_ATTESTATION_LEN: usize = 8 + 32 + 8 + 8 + 8;
+
+/// How old the price behind a rate may be, in seconds.
+pub const MAX_RATE_AGE: i64 = 10 * 60;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RateAttestation {
+    pub reward_mint: Pubkey,
+    pub stable_per_trillion_reward: u64,
+    pub priced_at: i64,
+    pub expires_at: i64,
+}
+
+impl RateAttestation {
+    pub fn parse(message: &[u8]) -> Result<Self> {
+        let message: &[u8; RATE_ATTESTATION_LEN] = message
+            .try_into()
+            .map_err(|_| error!(RewardFloatError::AttestationMalformed))?;
+        let (tag, rest) = message.split_at(8);
+        require!(
+            tag == RATE_ATTESTATION_TAG,
+            RewardFloatError::AttestationMalformed
+        );
+        let (mint, rest) = rest.split_at(32);
+        let word = |at: usize| -> [u8; 8] { rest[at..at + 8].try_into().unwrap() };
+        let attestation = Self {
+            reward_mint: Pubkey::new_from_array(mint.try_into().unwrap()),
+            stable_per_trillion_reward: u64::from_le_bytes(word(0)),
+            priced_at: i64::from_le_bytes(word(8)),
+            expires_at: i64::from_le_bytes(word(16)),
+        };
+        // A zero rate would size any allowance by dividing by it.
+        require!(
+            attestation.stable_per_trillion_reward > 0,
+            RewardFloatError::AttestationMalformed
+        );
+        Ok(attestation)
+    }
+
+    pub fn check(&self, reward_mint: &Pubkey, now: i64) -> Result<()> {
+        require_keys_eq!(
+            self.reward_mint,
+            *reward_mint,
+            RewardFloatError::RateAttestationWrongMint
+        );
+        require!(
+            now < self.expires_at,
+            RewardFloatError::RateAttestationExpired
+        );
+        require!(
+            self.expires_at.saturating_sub(now) <= MAX_REMAINING_VALIDITY,
+            RewardFloatError::RateAttestationValidityTooLong
+        );
+        require!(
+            now.saturating_sub(self.priced_at) <= MAX_RATE_AGE,
+            RewardFloatError::RateAttestationStale
+        );
+        Ok(())
+    }
+}
+
+/// Reads the rate attestation signed two instructions before the current one, right
+/// before the limit's, and checks it against the pool's attestor, the loan's reward
+/// token and the clock.
+pub fn verify_rate_attestation(
+    instructions: &AccountInfo,
+    attestor: &Pubkey,
+    reward_mint: &Pubkey,
+    now: i64,
+) -> Result<RateAttestation> {
+    let current = load_current_index_checked(instructions)?;
+    require!(current > 1, RewardFloatError::AttestationMissing);
+    let ix = load_instruction_at_checked(usize::from(current - 2), instructions)?;
+    let attestation = RateAttestation::parse(attested_message(&ix, attestor)?)?;
+    attestation.check(reward_mint, now)?;
+    Ok(attestation)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LimitAttestation {
     pub operator: Pubkey,
@@ -558,6 +641,215 @@ mod tests {
         expect(
             attestation.check(&operator, i64::MIN + 1),
             RewardFloatError::AttestationValidityTooLong,
+        );
+    }
+
+    // The message of `packages/shared`'s own golden rate test, byte for byte: mint
+    // 4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy, 2 278 438 stablecoin units for 10^12
+    // reward units, priced 2026-10-06T10:00:00Z, expiring two minutes later.
+    const RATE_GOLDEN: &str = concat!(
+        "6472663a72617431",
+        "3a3e72b67ea94e1765004ef68244f6b0b32ddde743a33b20f91430e1e817c1ac",
+        "26c4220000000000",
+        "a0c6c46a00000000",
+        "18c7c46a00000000",
+    );
+
+    const PRICED_AT: i64 = 1_791_280_800;
+
+    fn rate_message(mint: &Pubkey, rate: u64, priced_at: i64, expires_at: i64) -> Vec<u8> {
+        let mut message = RATE_ATTESTATION_TAG.to_vec();
+        message.extend_from_slice(mint.as_ref());
+        message.extend_from_slice(&rate.to_le_bytes());
+        message.extend_from_slice(&priced_at.to_le_bytes());
+        message.extend_from_slice(&expires_at.to_le_bytes());
+        message
+    }
+
+    fn verify_rate(
+        instructions: &[Instruction],
+        current: u16,
+        attestor: &Pubkey,
+        mint: &Pubkey,
+        now: i64,
+    ) -> Result<RateAttestation> {
+        let mut data = sysvar(instructions, current);
+        let mut lamports = 0;
+        let owner = Pubkey::default();
+        let account = AccountInfo::new(
+            &INSTRUCTIONS_ID,
+            false,
+            false,
+            &mut lamports,
+            &mut data,
+            &owner,
+            false,
+            0,
+        );
+        verify_rate_attestation(&account, attestor, mint, now)
+    }
+
+    struct RateCase {
+        limit: Case,
+        mint: Pubkey,
+        message: Vec<u8>,
+    }
+
+    impl RateCase {
+        fn fresh() -> Self {
+            let limit = Case::fresh();
+            let mint = Pubkey::new_unique();
+            let message = rate_message(&mint, 2_278_438, limit.now - 30, limit.now + 90);
+            Self {
+                limit,
+                mint,
+                message,
+            }
+        }
+
+        fn signed(&self) -> Instruction {
+            ed25519(ed25519_data(&self.limit.attestor, &self.message, OWN))
+        }
+
+        fn run(&self, instructions: &[Instruction], current: u16) -> Result<RateAttestation> {
+            verify_rate(
+                instructions,
+                current,
+                &self.limit.attestor,
+                &self.mint,
+                self.limit.now,
+            )
+        }
+    }
+
+    #[test]
+    fn the_rate_message_the_api_signs_is_read_field_by_field() {
+        let parsed = RateAttestation::parse(&unhex(RATE_GOLDEN)).unwrap();
+        assert_eq!(
+            parsed.reward_mint.to_string(),
+            "4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy"
+        );
+        assert_eq!(parsed.stable_per_trillion_reward, 2_278_438);
+        assert_eq!(parsed.priced_at, PRICED_AT);
+        assert_eq!(parsed.expires_at, PRICED_AT + 120);
+    }
+
+    #[test]
+    fn a_zero_rate_is_refused_as_malformed() {
+        let message = rate_message(&Pubkey::new_unique(), 0, PRICED_AT, PRICED_AT + 120);
+        expect(
+            RateAttestation::parse(&message),
+            RewardFloatError::AttestationMalformed,
+        );
+    }
+
+    #[test]
+    fn a_limit_attestation_does_not_parse_as_a_rate() {
+        expect(
+            RateAttestation::parse(&unhex(GOLDEN)),
+            RewardFloatError::AttestationMalformed,
+        );
+        let mut tagged = unhex(RATE_GOLDEN);
+        tagged[..8].copy_from_slice(LIMIT_ATTESTATION_TAG);
+        expect(
+            RateAttestation::parse(&tagged),
+            RewardFloatError::AttestationMalformed,
+        );
+    }
+
+    #[test]
+    fn a_rate_two_instructions_back_by_the_attestor_for_this_mint_passes() {
+        let case = RateCase::fresh();
+        let rate = case
+            .run(&[case.signed(), case.limit.signed(), borrow()], 2)
+            .unwrap();
+        assert_eq!(rate, RateAttestation::parse(&case.message).unwrap());
+    }
+
+    #[test]
+    fn without_a_rate_before_the_limit_check_the_rate_is_missing() {
+        let case = RateCase::fresh();
+        expect(
+            case.run(&[case.limit.signed(), borrow()], 1),
+            RewardFloatError::AttestationMissing,
+        );
+        expect(
+            case.run(&[borrow(), case.limit.signed(), borrow()], 2),
+            RewardFloatError::AttestationMissing,
+        );
+    }
+
+    #[test]
+    fn the_two_signature_checks_in_the_other_order_are_refused() {
+        let case = RateCase::fresh();
+        expect(
+            case.run(&[case.limit.signed(), case.signed(), borrow()], 2),
+            RewardFloatError::AttestationMalformed,
+        );
+    }
+
+    #[test]
+    fn a_rate_signed_by_another_key_is_refused() {
+        let case = RateCase::fresh();
+        let stranger = ed25519(ed25519_data(&Pubkey::new_unique(), &case.message, OWN));
+        expect(
+            case.run(&[stranger, case.limit.signed(), borrow()], 2),
+            RewardFloatError::AttestationWrongSigner,
+        );
+    }
+
+    #[test]
+    fn a_rate_for_another_mint_is_refused() {
+        let case = RateCase::fresh();
+        let rate = RateAttestation::parse(&case.message).unwrap();
+        expect(
+            rate.check(&Pubkey::new_unique(), case.limit.now),
+            RewardFloatError::RateAttestationWrongMint,
+        );
+    }
+
+    #[test]
+    fn a_rate_expires_on_its_expiry_second_not_after_it() {
+        let mint = Pubkey::new_unique();
+        let rate =
+            RateAttestation::parse(&rate_message(&mint, 1, PRICED_AT, PRICED_AT + 120)).unwrap();
+        assert!(rate.check(&mint, PRICED_AT + 119).is_ok());
+        expect(
+            rate.check(&mint, PRICED_AT + 120),
+            RewardFloatError::RateAttestationExpired,
+        );
+    }
+
+    #[test]
+    fn a_rate_valid_for_longer_than_the_ceiling_is_refused() {
+        let mint = Pubkey::new_unique();
+        let now = PRICED_AT + 10;
+        let at_ceiling = rate_message(&mint, 1, PRICED_AT, now + MAX_REMAINING_VALIDITY);
+        assert!(RateAttestation::parse(&at_ceiling)
+            .unwrap()
+            .check(&mint, now)
+            .is_ok());
+        let past = rate_message(&mint, 1, PRICED_AT, now + MAX_REMAINING_VALIDITY + 1);
+        expect(
+            RateAttestation::parse(&past).unwrap().check(&mint, now),
+            RewardFloatError::RateAttestationValidityTooLong,
+        );
+    }
+
+    #[test]
+    fn a_price_older_than_ten_minutes_is_refused() {
+        let mint = Pubkey::new_unique();
+        let rate = RateAttestation::parse(&rate_message(
+            &mint,
+            1,
+            PRICED_AT,
+            PRICED_AT + MAX_RATE_AGE + 60,
+        ))
+        .unwrap();
+        assert!(rate.check(&mint, PRICED_AT + MAX_RATE_AGE).is_ok());
+        expect(
+            rate.check(&mint, PRICED_AT + MAX_RATE_AGE + 1),
+            RewardFloatError::RateAttestationStale,
         );
     }
 

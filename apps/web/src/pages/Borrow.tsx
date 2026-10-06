@@ -1,6 +1,5 @@
 import {
   borrowInstructions,
-  delegationInstructions,
   fetchOpenLoans,
   fetchOperatorAccount,
   fetchPool,
@@ -381,19 +380,14 @@ const BorrowForm = ({
         setReads((n) => n + 1)
         return
       }
-      // Sized again here, not taken from the screen: the rate and the loans are read at
-      // the moment of signing, and the allowance must not outgrow the debt (FR-014a).
-      const { allowance } = delegationFor({
-        loans: loans.map((loan) => loan.account),
-        rewardMint: network.rewardMint,
-        newLoan: { principal: amount, aprBps: quote.aprBps, termPeriods },
-        rate: BigInt(rate.value.stablePerTrillionReward),
-        now: BigInt(Math.floor(Date.now() / 1000)),
-      })
-      const borrow = await borrowInstructions(program, {
+      // borrow approves the reward account itself, sized at the rate the loan actually
+      // gets and this attested rate: the loan never exists without its delegation, and
+      // the delegation never outgrows the debt (FR-014a).
+      const instructions = await borrowInstructions(program, {
         operator: operatorKey,
         pool,
         attestation: attestation.value,
+        rate: rate.value,
         openLoans: openLoansForBorrow({ operatorAccount, pool: pool.address, loans }),
         rewardMint: network.rewardMint,
         amount,
@@ -402,16 +396,6 @@ const BorrowForm = ({
         // Exactly the quoted rate: the cost on the screen is the cost signed (FR-009a).
         maxAprBps: quote.aprBps,
       })
-      // Approve first, in the same transaction (FR-014): the loan never exists without
-      // its delegation. The attestor's signature stays right before borrow, which reads it.
-      const instructions = [
-        ...delegationInstructions({
-          operator: operatorKey,
-          rewardMint: network.rewardMint,
-          allowance,
-        }),
-        ...borrow,
-      ]
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
       const transaction = new Transaction({
         feePayer: operatorKey,

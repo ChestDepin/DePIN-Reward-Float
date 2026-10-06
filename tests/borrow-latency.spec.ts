@@ -15,6 +15,7 @@ import {
   poolAddress,
   repayInstruction,
   rewardFloatProgram,
+  rewardMintsSchema,
 } from '@drf/anchor-client'
 import { solanaAddressSchema } from '@drf/shared/schemas'
 import { base58 } from '@scure/base'
@@ -29,7 +30,7 @@ import {
 } from '@solana/web3.js'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { attestationFor } from './borrow-attestation.ts'
+import { attestationFor, rateAttestationFor } from './borrow-attestation.ts'
 import { percentile, summarise } from './latency.ts'
 
 // SC-004: a loan is one transaction, confirmed in under five seconds. Measured from the
@@ -55,6 +56,10 @@ const benchEnvSchema = z.object({
   STABLE_MINT: solanaAddressSchema,
   ATTESTOR_SECRET_KEY: z.string().min(1),
   ATTESTOR_PUBLIC_KEY: solanaAddressSchema,
+  // A loan is repaid from a reward token, and borrow approves the operator's account of
+  // it; the first devnet stand-in serves. It cannot be the stablecoin: that account is
+  // already the loan's destination.
+  VITE_REWARD_MINTS: rewardMintsSchema.refine((mints) => mints.size > 0, 'no reward mint'),
   // The endpoint the borrow page itself uses unless a build sets another.
   VITE_DEVNET_RPC_URL: z.preprocess(
     (value) => (value === '' ? undefined : value),
@@ -147,6 +152,8 @@ describe.skipIf(!parsed.success)(
         address: env.ATTESTOR_PUBLIC_KEY,
       }
       const operatorAddress = solanaAddressSchema.parse(operator.publicKey.toBase58())
+      const [rewardMint] = [...env.VITE_REWARD_MINTS.values()]
+      if (rewardMint === undefined) return
       const confirmed: number[] = []
       const prepared: number[] = []
 
@@ -160,15 +167,21 @@ describe.skipIf(!parsed.success)(
           nonce,
           at: new Date(),
         })
+        const rate = await rateAttestationFor({
+          rewardMint: solanaAddressSchema.parse(rewardMint.toBase58()),
+          attestor,
+          stablePerTrillionReward: 2_406_662n,
+          at: new Date(),
+        })
         const current = await fetchPool(connection, pool.address)
         const instructions = await borrowInstructions(program, {
           operator: operator.publicKey,
           pool: current,
           attestation,
+          rate,
           // Every earlier sample was repaid in full, so nothing is open.
           openLoans: [],
-          // The reward token only matters to a sweep, and these loans never see one.
-          rewardMint: current.account.stableMint,
+          rewardMint,
           amount: AMOUNT,
           termPeriods: 1,
           sweepBps: 5_000,
