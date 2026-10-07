@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
+import type { ChainReader } from '@drf/anchor-client'
+import { encodeLoan, fakeChain, key, storedAccount } from '@drf/anchor-client/test-support'
 import { createDatabase, creditProfiles, type Database, networks } from '@drf/db'
 import { creditLimitSchema } from '@drf/shared/api'
 import {
@@ -19,15 +21,20 @@ import {
 } from '@drf/shared/scoring'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { StoredHistory } from './operators.ts'
+import { DataUnavailable } from './errors.ts'
 import {
   buildCreditLimit,
   computeProfiles,
+  createChainManualRepaymentSource,
   createDbCreditProfileStore,
   createLimitRoutes,
+  type FlaggedLoan,
   LIMIT_TTL_HOURS,
+  type ManualRepaymentSource,
+  readManualRepayment,
   type StoredCreditProfile,
 } from './limit.ts'
+import type { StoredHistory } from './operators.ts'
 
 const WALLET = solanaAddressSchema.parse('4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy')
 const HONEY_MINT = solanaAddressSchema.parse('2RZMt9LwzUzSUNfprdLSUF33gS2Y3EJL3jqN6g6a9oP1')
@@ -213,7 +220,11 @@ describe('computeProfiles', () => {
 
 describe('buildCreditLimit', () => {
   it('sends every number as a string and keeps the refusal structured', () => {
-    const body = buildCreditLimit({ wallet: WALLET, profiles: profilesOf(fullHivemapper) })
+    const body = buildCreditLimit({
+      wallet: WALLET,
+      profiles: profilesOf(fullHivemapper),
+      manualRepayment: { state: 'clear' },
+    })
 
     expect(creditLimitSchema.parse(body)).toEqual(body)
     expect(body.networks[0]).toMatchObject({
@@ -230,6 +241,7 @@ describe('buildCreditLimit', () => {
     const body = buildCreditLimit({
       wallet: WALLET,
       profiles: profilesOf({ ...fullHivemapper, prices: new Map() }),
+      manualRepayment: { state: 'clear' },
     })
 
     expect(creditLimitSchema.parse(body).networks[0]).toMatchObject({
@@ -237,6 +249,167 @@ describe('buildCreditLimit', () => {
       factors: [],
       reason: { kind: 'no-recent-price', window: { from: '2026-08-02', to: '2026-08-31' } },
     })
+  })
+})
+
+const FLAGGED_LOAN = solanaAddressSchema.parse(key(41).toBase58())
+const REWARD_MINT = solanaAddressSchema.parse(key(42).toBase58())
+
+const flagged = (reason: FlaggedLoan['reason']): FlaggedLoan => ({
+  loan: FLAGGED_LOAN,
+  rewardMint: REWARD_MINT,
+  reason,
+})
+
+describe('buildCreditLimit with a loan waiting for a manual repayment', () => {
+  // The limit itself still stands: it is what the operator gets back once the loan is
+  // repaid, and borrowing stops on the chain, not because the history changed.
+  it('keeps the computed limits next to the loan that stops borrowing', () => {
+    const body = buildCreditLimit({
+      wallet: WALLET,
+      profiles: profilesOf(fullHivemapper),
+      manualRepayment: { state: 'pending', loans: [flagged('withdrawn-early')] },
+    })
+
+    expect(creditLimitSchema.parse(body)).toEqual(body)
+    expect(body.networks[0]?.limitUsd).toBe('4000000')
+    expect(body.manualRepayment).toEqual({
+      state: 'pending',
+      loans: [{ loan: FLAGGED_LOAN, rewardMint: REWARD_MINT, reason: 'withdrawn-early' }],
+    })
+  })
+
+  it('is not a pending state without a loan that is pending', () => {
+    const body = buildCreditLimit({
+      wallet: WALLET,
+      profiles: profilesOf(fullHivemapper),
+      manualRepayment: { state: 'pending', loans: [] },
+    })
+
+    expect(creditLimitSchema.safeParse(body).success).toBe(false)
+  })
+})
+
+describe('readManualRepayment', () => {
+  const source = (read: ManualRepaymentSource['read']): ManualRepaymentSource => ({ read })
+
+  it('is clear when no open loan of the wallet is flagged', async () => {
+    expect(
+      await readManualRepayment(
+        source(async () => []),
+        WALLET,
+      ),
+    ).toEqual({ state: 'clear' })
+  })
+
+  it('names every flagged loan with its reason', async () => {
+    const loans = [flagged('revoked'), { ...flagged('allowance-short'), loan: REWARD_MINT }]
+
+    expect(
+      await readManualRepayment(
+        source(async () => loans),
+        WALLET,
+      ),
+    ).toEqual({
+      state: 'pending',
+      loans,
+    })
+  })
+
+  // FR-025: not knowing is its own state. Borrowing is refused on the chain either way,
+  // so the limit can still be shown while devnet does not answer.
+  it('is unknown when the chain could not be read', async () => {
+    const failing = source(async () => {
+      throw new DataUnavailable('the devnet loans')
+    })
+
+    expect(await readManualRepayment(failing, WALLET)).toEqual({ state: 'unknown' })
+  })
+
+  it('is unknown when there is no devnet to read', async () => {
+    expect(await readManualRepayment(null, WALLET)).toEqual({ state: 'unknown' })
+  })
+
+  it('lets a fault of its own through instead of calling it unknown', async () => {
+    const broken = source(async () => {
+      throw new Error('a loan that does not decode')
+    })
+
+    await expect(readManualRepayment(broken, WALLET)).rejects.toThrow('does not decode')
+  })
+})
+
+describe('createChainManualRepaymentSource', () => {
+  const operator = key(43)
+  const pool = key(44)
+  const wallet = solanaAddressSchema.parse(operator.toBase58())
+
+  const loanAt = async (seed: number, fields: Partial<Parameters<typeof encodeLoan>[0]>) =>
+    storedAccount(
+      key(seed),
+      await encodeLoan({ operator, pool, nonce: BigInt(seed), rewardMint: key(42), ...fields }),
+    )
+
+  const byLoan = (loans: readonly FlaggedLoan[]) =>
+    [...loans].sort((left, right) => (left.loan < right.loan ? -1 : 1))
+
+  it('returns the open loans of the wallet that wait for a manual repayment', async () => {
+    const chain = fakeChain([
+      await loanAt(51, { manualRepayment: 'allowanceShort' }),
+      await loanAt(52, { manualRepayment: null }),
+      await loanAt(53, { manualRepayment: 'withdrawnEarly', status: 'overdue' }),
+      await loanAt(54, { manualRepayment: 'revoked', operator: key(45) }),
+    ])
+
+    const loans = await createChainManualRepaymentSource(chain).read(wallet)
+
+    expect(byLoan(loans)).toEqual(
+      byLoan([
+        {
+          loan: solanaAddressSchema.parse(key(51).toBase58()),
+          rewardMint: REWARD_MINT,
+          reason: 'allowance-short',
+        },
+        {
+          loan: solanaAddressSchema.parse(key(53).toBase58()),
+          rewardMint: REWARD_MINT,
+          reason: 'withdrawn-early',
+        },
+      ]),
+    )
+  })
+
+  it('reads the reason a revoked delegation leaves', async () => {
+    const chain = fakeChain([await loanAt(55, { manualRepayment: 'revoked' })])
+
+    expect(await createChainManualRepaymentSource(chain).read(wallet)).toEqual([
+      { loan: key(55).toBase58(), rewardMint: REWARD_MINT, reason: 'revoked' },
+    ])
+  })
+
+  it('reports an RPC that did not answer as data it could not read', async () => {
+    const down: ChainReader = {
+      getAccountInfo: async () => {
+        throw new Error('fetch failed')
+      },
+      getProgramAccounts: async () => {
+        throw new Error('fetch failed')
+      },
+    }
+
+    await expect(createChainManualRepaymentSource(down).read(wallet)).rejects.toBeInstanceOf(
+      DataUnavailable,
+    )
+  })
+
+  it('does not call a loan it cannot decode unreadable', async () => {
+    const whole = await loanAt(56, { manualRepayment: 'revoked' })
+    const chain = fakeChain([storedAccount(key(56), whole.account.data.subarray(0, 180))])
+
+    const read = createChainManualRepaymentSource(chain).read(wallet)
+
+    await expect(read).rejects.toThrow()
+    await expect(read).rejects.not.toBeInstanceOf(DataUnavailable)
   })
 })
 
@@ -259,6 +432,7 @@ const routes = (input: {
   history?: Partial<StoredHistory>
   profiles?: readonly StoredCreditProfile[]
   now?: Date
+  flagged?: { current: readonly FlaggedLoan[] }
 }) => {
   const asked: MonthRange[] = []
   const { rows, store } = memoryStore(input.profiles)
@@ -272,6 +446,7 @@ const routes = (input: {
       },
     },
     profiles: store,
+    manualRepayments: { read: async () => input.flagged?.current ?? [] },
     now: () => at,
   })
 
@@ -326,6 +501,51 @@ describe('GET /operators/:address/limit', () => {
     expect(await response.json()).toMatchObject({ error: { code: 'INVALID_INPUT' } })
     expect(asked).toEqual([])
     expect(rows.writes).toBe(0)
+  })
+})
+
+describe('GET /operators/:address/limit while a loan waits for a manual repayment', () => {
+  const limitOf = async (app: ReturnType<typeof routes>['app'], init?: RequestInit) =>
+    creditLimitSchema.parse(
+      await (
+        await app.request(
+          `/operators/${WALLET}/limit${init?.method === 'POST' ? '/refresh' : ''}`,
+          init,
+        )
+      ).json(),
+    )
+
+  it('says borrowing stopped and why, next to the limit', async () => {
+    const { app } = routes({ history: fullHivemapper, flagged: { current: [flagged('revoked')] } })
+
+    const body = await limitOf(app)
+
+    expect(body.networks[0]?.limitUsd).toBe('4000000')
+    expect(body.manualRepayment).toEqual({ state: 'pending', loans: [flagged('revoked')] })
+  })
+
+  // The flag lifts the moment the loan is repaid; a 24-hour profile must not keep it.
+  it('reads the chain again even while the stored profile is fresh', async () => {
+    const chain: { current: readonly FlaggedLoan[] } = { current: [flagged('withdrawn-early')] }
+    const { app, asked } = routes({
+      history: fullHivemapper,
+      profiles: profilesOf(fullHivemapper, new Date(NOW.getTime() - 3_600_000)),
+      flagged: chain,
+    })
+
+    const before = await limitOf(app)
+    chain.current = []
+    const after = await limitOf(app)
+
+    expect(before.manualRepayment.state).toBe('pending')
+    expect(after.manualRepayment).toEqual({ state: 'clear' })
+    expect(asked).toEqual([])
+  })
+
+  it('answers the refresh with the same state', async () => {
+    const { app } = routes({ history: fullHivemapper, flagged: { current: [flagged('revoked')] } })
+
+    expect((await limitOf(app, { method: 'POST' })).manualRepayment.state).toBe('pending')
   })
 })
 

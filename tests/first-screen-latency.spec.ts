@@ -93,6 +93,7 @@ describe.skipIf(url === undefined)('SC-009 — the first screen of the dashboard
         logger: createLogger({ service: 'first-screen', level: 'fatal' }),
         attestor: ATTESTOR,
         rates: null,
+        manualRepayments: null,
         webOrigins: [origin],
         now: () => NOW,
       }).fetch,

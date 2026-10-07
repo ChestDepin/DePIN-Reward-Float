@@ -8,7 +8,11 @@ import {
 } from './routes/attestations.ts'
 import { DataUnavailable, errorBody } from './routes/errors.ts'
 import { createHealthRoutes, type PayoutActivitySource } from './routes/health.ts'
-import { type CreditProfileStore, createLimitRoutes } from './routes/limit.ts'
+import {
+  type CreditProfileStore,
+  createLimitRoutes,
+  type ManualRepaymentSource,
+} from './routes/limit.ts'
 import { createLoanRoutes, type WithholdingSource } from './routes/loans.ts'
 import { createOperatorRoutes, type PayoutHistorySource } from './routes/operators.ts'
 import { createRateRoutes, type RateSource } from './routes/rate.ts'
@@ -20,6 +24,8 @@ export type ServerDeps = {
   activity: PayoutActivitySource
   journal: AttestationJournal
   withholdings: WithholdingSource
+  // null: the api runs without devnet, and whether a loan is flagged is unknown.
+  manualRepayments: ManualRepaymentSource | null
   attestor: Attestor
   // null: the api runs without rates, and the rate endpoint says so.
   rates: RateSource | null
@@ -36,6 +42,7 @@ export function createServer({
   activity,
   journal,
   withholdings,
+  manualRepayments,
   attestor,
   rates,
   webOrigins,
@@ -50,8 +57,11 @@ export function createServer({
 
   app.route('/', createHealthRoutes({ activity, now }))
   app.route('/v1', createOperatorRoutes({ payouts, now }))
-  app.route('/v1', createLimitRoutes({ payouts, profiles, now }))
-  app.route('/v1', createAttestationRoutes({ payouts, profiles, journal, attestor, now }))
+  app.route('/v1', createLimitRoutes({ payouts, profiles, manualRepayments, now }))
+  app.route(
+    '/v1',
+    createAttestationRoutes({ payouts, profiles, journal, attestor, manualRepayments, now }),
+  )
   app.route('/v1', createRateRoutes({ rates, attestor, now }))
   app.route('/v1', createLoanRoutes({ withholdings }))
 

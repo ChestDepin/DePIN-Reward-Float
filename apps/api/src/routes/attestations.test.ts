@@ -27,7 +27,8 @@ import {
   createDbAttestationJournal,
   resolveAttestor,
 } from './attestations.ts'
-import type { StoredCreditProfile } from './limit.ts'
+import { DataUnavailable } from './errors.ts'
+import type { ManualRepaymentSource, StoredCreditProfile } from './limit.ts'
 import type { StoredHistory } from './operators.ts'
 
 const WALLET = solanaAddressSchema.parse('4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy')
@@ -137,7 +138,13 @@ const memoryJournal = () => {
   return { issued, journal }
 }
 
-const routes = (input: { profiles?: readonly StoredCreditProfile[]; now?: Date } = {}) => {
+const routes = (
+  input: {
+    profiles?: readonly StoredCreditProfile[]
+    now?: Date
+    manualRepayments?: ManualRepaymentSource | null
+  } = {},
+) => {
   const asked: MonthRange[] = []
   const written: (readonly StoredCreditProfile[])[] = []
   const { issued, journal } = memoryJournal()
@@ -158,6 +165,8 @@ const routes = (input: { profiles?: readonly StoredCreditProfile[]; now?: Date }
     },
     journal,
     attestor: { secretKey: SECRET_KEY, address: ATTESTOR },
+    manualRepayments:
+      input.manualRepayments === undefined ? { read: async () => [] } : input.manualRepayments,
     now: () => input.now ?? NOW,
   })
 
@@ -168,6 +177,40 @@ const post = (app: ReturnType<typeof createAttestationRoutes>, wallet = WALLET) 
   app.request(`/operators/${wallet}/attestations/limit`, { method: 'POST' })
 
 describe('POST /operators/:address/attestations/limit', () => {
+  // The program refuses this borrow anyway (`ManualRepaymentPending`); signing for it
+  // would only have the operator pay a fee to learn the same thing.
+  it('refuses to attest while a loan of the wallet waits for a manual repayment', async () => {
+    const { app, issued } = routes({
+      manualRepayments: {
+        read: async () => [
+          {
+            loan: solanaAddressSchema.parse('9axh44i2g6U3q4KZxG9ieH4Z8Khx4N8npn4hWotr8zeZ'),
+            rewardMint: solanaAddressSchema.parse('2RZMt9LwzUzSUNfprdLSUF33gS2Y3EJL3jqN6g6a9oP1'),
+            reason: 'withdrawn-early',
+          },
+        ],
+      },
+    })
+
+    const response = await post(app)
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ error: { code: 'MANUAL_REPAYMENT_PENDING' } })
+    expect(issued).toEqual([])
+  })
+
+  it('still attests when devnet could not say whether a loan is flagged', async () => {
+    const { app } = routes({
+      manualRepayments: {
+        read: async () => {
+          throw new DataUnavailable('the devnet loans')
+        },
+      },
+    })
+
+    expect((await post(app)).status).toBe(201)
+  })
+
   it('serves an attestation the attestor key verifies', async () => {
     const { app } = routes()
 

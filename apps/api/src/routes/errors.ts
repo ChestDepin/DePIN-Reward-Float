@@ -8,6 +8,8 @@ export const API_ERROR_CODES = [
   // нуль — це порахований ліміт, а незнання — не нуль.
   'DATA_UNAVAILABLE',
   'NOT_FOUND',
+  // FR-017: a loan of the wallet is flagged, and the program refuses to lend more.
+  'MANUAL_REPAYMENT_PENDING',
   'INTERNAL',
 ] as const
 

@@ -1,11 +1,18 @@
+import { type ChainReader, fetchOpenLoans, type LoanAccount } from '@drf/anchor-client'
 import { creditProfiles, type Database, networks as networksTable } from '@drf/db'
 import {
   type CreditLimit,
   type LimitRefusal,
   limitFactorSchema,
   limitRefusalSchema,
+  type ManualRepayment,
 } from '@drf/shared/api'
-import { type RewardNetwork, rewardNetworkSchema, type SolanaAddress } from '@drf/shared/schemas'
+import {
+  type RewardNetwork,
+  rewardNetworkSchema,
+  type SolanaAddress,
+  solanaAddressSchema,
+} from '@drf/shared/schemas'
 import {
   aggregateMonthlyPayouts,
   assessEligibility,
@@ -21,10 +28,11 @@ import {
   toCalendarMonth,
   usdAmountSchema,
 } from '@drf/shared/scoring'
+import { PublicKey } from '@solana/web3.js'
 import { asc, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { reading, walletParam } from './errors.ts'
+import { DataUnavailable, reading, walletParam } from './errors.ts'
 import { historyPeriod, type PayoutHistorySource, type StoredHistory } from './operators.ts'
 
 // FR-007: показане значення не старше за 24 години.
@@ -109,12 +117,71 @@ export function computeProfiles(input: {
     })
 }
 
+export type FlaggedLoan = Extract<ManualRepayment, { state: 'pending' }>['loans'][number]
+
+export type ManualRepaymentSource = {
+  read(wallet: SolanaAddress): Promise<readonly FlaggedLoan[]>
+}
+
+const REASONS = {
+  revoked: 'revoked',
+  allowanceShort: 'allowance-short',
+  withdrawnEarly: 'withdrawn-early',
+} as const satisfies Record<NonNullable<LoanAccount['manualRepayment']>, FlaggedLoan['reason']>
+
+// Only the RPC calls are wrapped: a loan that does not decode is our fault, not devnet
+// being unavailable, and must stay a 500.
+function readingChain(reader: ChainReader): ChainReader {
+  const source = 'the devnet loans'
+  return {
+    getAccountInfo: (address) => reading(source, reader.getAccountInfo(address)),
+    getProgramAccounts: (programId, config) =>
+      reading(source, reader.getProgramAccounts(programId, config)),
+  }
+}
+
+export function createChainManualRepaymentSource(reader: ChainReader): ManualRepaymentSource {
+  const chain = readingChain(reader)
+  return {
+    async read(wallet) {
+      const loans = await fetchOpenLoans(chain, new PublicKey(wallet))
+      return loans.flatMap(({ address, account }) =>
+        account.manualRepayment === null
+          ? []
+          : [
+              {
+                loan: solanaAddressSchema.parse(address.toBase58()),
+                rewardMint: solanaAddressSchema.parse(account.rewardMint.toBase58()),
+                reason: REASONS[account.manualRepayment],
+              },
+            ],
+      )
+    },
+  }
+}
+
+export async function readManualRepayment(
+  source: ManualRepaymentSource | null,
+  wallet: SolanaAddress,
+): Promise<ManualRepayment> {
+  if (source === null) return { state: 'unknown' }
+  try {
+    const [first, ...rest] = await source.read(wallet)
+    return first === undefined ? { state: 'clear' } : { state: 'pending', loans: [first, ...rest] }
+  } catch (error) {
+    if (error instanceof DataUnavailable) return { state: 'unknown' }
+    throw error
+  }
+}
+
 export function buildCreditLimit(input: {
   wallet: SolanaAddress
   profiles: readonly StoredCreditProfile[]
+  manualRepayment: ManualRepayment
 }): CreditLimit {
   return {
     wallet: input.wallet,
+    manualRepayment: input.manualRepayment,
     networks: input.profiles.map((profile) => ({
       networkId: profile.network.id,
       displayName: profile.network.displayName,
@@ -292,19 +359,34 @@ export function createProfileReader(deps: {
 export type LimitRoutesDeps = {
   payouts: PayoutHistorySource
   profiles: CreditProfileStore
+  // null: the api runs without devnet, and the state is reported as unknown.
+  manualRepayments: ManualRepaymentSource | null
   now: () => Date
 }
 
-export function createLimitRoutes({ payouts, profiles, now }: LimitRoutesDeps): Hono {
+export function createLimitRoutes({
+  payouts,
+  profiles,
+  manualRepayments,
+  now,
+}: LimitRoutesDeps): Hono {
   const routes = new Hono()
   const current = createProfileReader({ payouts, profiles })
+
+  // The flag lifts with the repayment, so it is read on every request and never stored
+  // with the 24-hour profile.
+  const answer = async (wallet: SolanaAddress, refresh: boolean) => {
+    const [stored, manualRepayment] = await Promise.all([
+      current(wallet, now(), refresh),
+      readManualRepayment(manualRepayments, wallet),
+    ])
+    return buildCreditLimit({ wallet, profiles: stored, manualRepayment })
+  }
 
   routes.get('/operators/:address/limit', walletParam, async (c) => {
     const { address } = c.req.valid('param')
 
-    return c.json(
-      buildCreditLimit({ wallet: address, profiles: await current(address, now(), false) }),
-    )
+    return c.json(await answer(address, false))
   })
 
   // FR-007: перерахунок на вимогу оператора — той самий розрахунок, але без
@@ -312,9 +394,7 @@ export function createLimitRoutes({ payouts, profiles, now }: LimitRoutesDeps): 
   routes.post('/operators/:address/limit/refresh', walletParam, async (c) => {
     const { address } = c.req.valid('param')
 
-    return c.json(
-      buildCreditLimit({ wallet: address, profiles: await current(address, now(), true) }),
-    )
+    return c.json(await answer(address, true))
   })
 
   return routes

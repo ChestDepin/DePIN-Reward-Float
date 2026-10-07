@@ -3,11 +3,13 @@ import { createLogger } from '@drf/shared/log'
 import { SUPPORTED_NETWORKS } from '@drf/shared/schemas'
 import { startDevnetKeeper, startSweepJournal } from '@drf/worker/keeper'
 import { serve } from '@hono/node-server'
+import { Connection } from '@solana/web3.js'
 import { createApp } from './app.ts'
 import { loadApiConfig, type RateConfig } from './config.ts'
 import { createJupiterRateSource, createRpcBlockTime, rateMints } from './jupiter.ts'
 import { rateFromApp } from './keeper.ts'
 import { resolveAttestor } from './routes/attestations.ts'
+import { createChainManualRepaymentSource } from './routes/limit.ts'
 import type { RateSource } from './routes/rate.ts'
 import { createShutdown } from './shutdown.ts'
 
@@ -65,6 +67,16 @@ const app = createApp({
   logger,
   attestor,
   rates: config.rates === null ? null : rateSource(config.rates),
+  manualRepayments:
+    config.sweepJournal === null
+      ? null
+      : createChainManualRepaymentSource(
+          new Connection(config.sweepJournal.devnetRpcUrl, {
+            commitment: 'confirmed',
+            fetch: (input, init) =>
+              fetch(input, { ...init, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) }),
+          }),
+        ),
   webOrigins: config.webOrigins,
   now: () => new Date(),
 })

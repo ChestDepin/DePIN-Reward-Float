@@ -55,9 +55,35 @@ export const networkCreditLimitSchema = z
 
 export type NetworkCreditLimit = z.infer<typeof networkCreditLimitSchema>
 
+export const MANUAL_REPAYMENT_REASONS = ['revoked', 'allowance-short', 'withdrawn-early'] as const
+
+// FR-017: read live from devnet and kept next to the limits, not in place of them. The
+// limit still stands and comes back with the repayment; what stops borrowing is the
+// program (`ManualRepaymentPending`), and on every network at once. `unknown` is FR-025:
+// devnet did not answer, which is not the same as "no flagged loans".
+export const manualRepaymentSchema = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('clear') }),
+  z.object({
+    state: z.literal('pending'),
+    loans: z
+      .array(
+        z.object({
+          loan: solanaAddressSchema,
+          rewardMint: solanaAddressSchema,
+          reason: z.enum(MANUAL_REPAYMENT_REASONS),
+        }),
+      )
+      .min(1),
+  }),
+  z.object({ state: z.literal('unknown') }),
+])
+
+export type ManualRepayment = z.infer<typeof manualRepaymentSchema>
+
 export const creditLimitSchema = z.object({
   wallet: solanaAddressSchema,
   networks: z.array(networkCreditLimitSchema),
+  manualRepayment: manualRepaymentSchema,
 })
 
 export type CreditLimit = z.infer<typeof creditLimitSchema>

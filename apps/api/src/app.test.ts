@@ -24,6 +24,7 @@ describe('createApp', () => {
     logger: createLogger({ service: 'api-test', level: 'fatal' }),
     attestor: ATTESTOR,
     rates: null,
+    manualRepayments: null,
     webOrigins: [ORIGIN],
     now: () => new Date('2026-09-22T12:00:00.000Z'),
   })

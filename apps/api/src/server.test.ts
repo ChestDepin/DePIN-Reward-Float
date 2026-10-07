@@ -41,6 +41,7 @@ const deps = (logger: ReturnType<typeof createLogger>) => ({
   withholdings: { read: async () => [] },
   attestor: ATTESTOR,
   rates: null,
+  manualRepayments: null,
   webOrigins: ['http://localhost:5173'],
   now: () => new Date('2026-08-31T12:00:00.000Z'),
 })

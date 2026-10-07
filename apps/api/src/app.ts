@@ -3,7 +3,7 @@ import type { Hono } from 'hono'
 import type { Logger } from 'pino'
 import { type Attestor, createDbAttestationJournal } from './routes/attestations.ts'
 import { createDbPayoutActivitySource } from './routes/health.ts'
-import { createDbCreditProfileStore } from './routes/limit.ts'
+import { createDbCreditProfileStore, type ManualRepaymentSource } from './routes/limit.ts'
 import { createDbWithholdingSource } from './routes/loans.ts'
 import { createDbPayoutHistorySource } from './routes/operators.ts'
 import type { RateSource } from './routes/rate.ts'
@@ -16,13 +16,22 @@ export type AppDeps = {
   // лишається синхронним, а звірка пари робиться раз при старті процесу.
   attestor: Attestor
   rates: RateSource | null
+  manualRepayments: ManualRepaymentSource | null
   webOrigins: readonly string[]
   now: () => Date
 }
 
 // Єдине місце, де сервер збирається з джерел на базі: і запуск, і заміри
 // беруть застосунок звідси, тож зміна складання не пройде повз замір.
-export function createApp({ db, logger, attestor, rates, webOrigins, now }: AppDeps): Hono {
+export function createApp({
+  db,
+  logger,
+  attestor,
+  rates,
+  manualRepayments,
+  webOrigins,
+  now,
+}: AppDeps): Hono {
   return createServer({
     logger,
     payouts: createDbPayoutHistorySource(db),
@@ -30,6 +39,7 @@ export function createApp({ db, logger, attestor, rates, webOrigins, now }: AppD
     activity: createDbPayoutActivitySource(db),
     journal: createDbAttestationJournal(db),
     withholdings: createDbWithholdingSource(db),
+    manualRepayments,
     attestor,
     rates,
     webOrigins,

@@ -12,7 +12,13 @@ import { base58 } from '@scure/base'
 import { desc, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { errorBody, walletParam } from './errors.ts'
-import { type CreditProfileStore, createProfileReader, type StoredCreditProfile } from './limit.ts'
+import {
+  type CreditProfileStore,
+  createProfileReader,
+  type ManualRepaymentSource,
+  readManualRepayment,
+  type StoredCreditProfile,
+} from './limit.ts'
 import type { PayoutHistorySource } from './operators.ts'
 
 // Атестація живе рівно стільки, скільки треба, щоб підписати нею одну видачу:
@@ -143,6 +149,7 @@ export type AttestationRoutesDeps = {
   profiles: CreditProfileStore
   journal: AttestationJournal
   attestor: Attestor
+  manualRepayments: ManualRepaymentSource | null
   now: () => Date
 }
 
@@ -151,6 +158,7 @@ export function createAttestationRoutes({
   profiles,
   journal,
   attestor,
+  manualRepayments,
   now,
 }: AttestationRoutesDeps): Hono {
   const routes = new Hono()
@@ -159,6 +167,16 @@ export function createAttestationRoutes({
   routes.post('/operators/:address/attestations/limit', walletParam, async (c) => {
     const { address } = c.req.valid('param')
     const at = now()
+
+    // The program refuses this borrow anyway; signing for it would only have the
+    // operator pay a fee to learn the same thing. Unknown is not a refusal: the
+    // program still decides.
+    if ((await readManualRepayment(manualRepayments, address)).state === 'pending') {
+      return c.json(
+        errorBody('MANUAL_REPAYMENT_PENDING', 'a loan waits for a manual repayment'),
+        409,
+      )
+    }
 
     // Строк ліміту — це і строк права його атестувати: прострочений профіль
     // перераховується, а не підписується таким, як лежав.
