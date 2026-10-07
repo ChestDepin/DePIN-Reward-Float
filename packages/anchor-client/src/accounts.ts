@@ -30,6 +30,13 @@ export const loanSchema = z.object({
   aprBps: small,
   sweepBps: small,
   status: z.union([variant('active'), variant('overdue'), variant('repaid')]),
+  rewardDue: integer,
+  manualRepayment: z.union([
+    z.null(),
+    variant('revoked'),
+    variant('allowanceShort'),
+    variant('withdrawnEarly'),
+  ]),
   bump: small,
 })
 

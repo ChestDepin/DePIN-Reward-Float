@@ -36,7 +36,11 @@ import { type ApiFailure, api, useResource } from '../lib/api'
 import { type BorrowFailure, describeBorrowFailure, parseStableAmount } from '../lib/borrow'
 import { chainConfig } from '../lib/chain'
 import { formatBps, formatCost, formatRate, formatTokens, formatUsd } from '../lib/format'
-import { delegationAfterRepayment, type RepaymentDelegation } from '../lib/mandate'
+import {
+  delegationAfterRepayment,
+  manualRepaymentText,
+  type RepaymentDelegation,
+} from '../lib/mandate'
 import { useAddressParam, useOperatorIdentity } from '../lib/wallet'
 
 type Loans =
@@ -203,17 +207,28 @@ const Open = ({ loans, now }: { loans: OnChain<LoanAccount>[]; now: bigint }) =>
           <tbody>
             {loans.map(({ address, account }) => {
               const position = loanPosition(account, now)
+              const manual = account.manualRepayment
               return (
-                <tr key={address.toBase58()} className="border-b border-rule">
-                  <td className="py-2">
-                    {day(account.dueAt)}
-                    {account.status === 'overdue' && <span className="text-amber"> overdue</span>}
-                  </td>
-                  <td className={cell}>{(account.aprBps / 100).toFixed(2)}%</td>
-                  <td className={cell}>{formatCost(position.outstanding)}</td>
-                  <td className={cell}>{formatCost(position.interest)}</td>
-                  <td className={cell}>{nextText(position.next)}</td>
-                </tr>
+                <Fragment key={address.toBase58()}>
+                  <tr className={manual === null ? 'border-b border-rule' : ''}>
+                    <td className="py-2">
+                      {day(account.dueAt)}
+                      {account.status === 'overdue' && <span className="text-amber"> overdue</span>}
+                      {manual !== null && <span className="text-amber"> manual</span>}
+                    </td>
+                    <td className={cell}>{(account.aprBps / 100).toFixed(2)}%</td>
+                    <td className={cell}>{formatCost(position.outstanding)}</td>
+                    <td className={cell}>{formatCost(position.interest)}</td>
+                    <td className={cell}>{nextText(position.next)}</td>
+                  </tr>
+                  {manual !== null && (
+                    <tr className="border-b border-rule text-amber">
+                      <td colSpan={5} className="pb-2 text-[11px] sm:text-[12px] leading-relaxed">
+                        {manualRepaymentText(manual)}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               )
             })}
           </tbody>

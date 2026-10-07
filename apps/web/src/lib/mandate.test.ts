@@ -8,6 +8,7 @@ import {
   foreignDelegate,
   type MandateLoan,
   mandateState,
+  manualRepaymentText,
 } from './mandate'
 
 function key(seed: number): PublicKey {
@@ -223,5 +224,25 @@ describe('delegationAfterRepayment', () => {
       expect(after([200_000_000n, 100_000_000n, 0n], { account: other })).toEqual({ kind: 'keep' })
       expect(after([30_000_000n, 0n, 0n], { account: other })).toEqual({ kind: 'keep' })
     }
+  })
+})
+
+describe('why a loan needs a manual repayment', () => {
+  it('names each cause in its own words', () => {
+    expect(manualRepaymentText('revoked')).toMatch(/permission .* was revoked/)
+    expect(manualRepaymentText('allowanceShort')).toMatch(/permission left is too small/)
+    expect(manualRepaymentText('withdrawnEarly')).toMatch(/left the reward account before/)
+  })
+
+  // Repaying by hand works whatever the cause; a repayment does not set a missing permission
+  // again, so the two causes that took it away also point to where it is given.
+  it('says what to do and what is blocked meanwhile, whatever the cause', () => {
+    for (const reason of ['revoked', 'allowanceShort', 'withdrawnEarly'] as const) {
+      expect(manualRepaymentText(reason)).toMatch(/Repay it below/)
+      expect(manualRepaymentText(reason)).toMatch(/no new loan/)
+    }
+    expect(manualRepaymentText('revoked')).toMatch(/Mandate/)
+    expect(manualRepaymentText('allowanceShort')).toMatch(/Mandate/)
+    expect(manualRepaymentText('withdrawnEarly')).not.toMatch(/Mandate/)
   })
 })

@@ -57,10 +57,11 @@ async function loan(
   rewardMint: PublicKey,
   nonce: bigint,
   inPool = pool,
+  rewardDue = 0n,
 ) {
   return {
     address,
-    account: decodeLoan(await encodeLoan({ operator, pool: inPool, nonce, rewardMint })),
+    account: decodeLoan(await encodeLoan({ operator, pool: inPool, nonce, rewardMint, rewardDue })),
   }
 }
 
@@ -116,6 +117,27 @@ describe('planSweeps', () => {
     expect((await plan({ balance: null })).due).toEqual([])
   })
 
+  // Tokens a sweep counted as owed sit below the watch, so nothing new arriving is no
+  // reason to leave them there.
+  it('sweeps a watch with nothing new above it while a loan of its mint is still owed', async () => {
+    const owed = [await loan(key(11), alice, honey, 1n, pool, 3n * H)]
+
+    const { due } = await plan({ loans: owed, balance: 5n * H })
+
+    expect(due).toHaveLength(1)
+    expect(due[0]?.payout).toBe(0n)
+    expect((await plan({ loans: owed, balance: 2n * H })).due).toHaveLength(1)
+  })
+
+  it('leaves a watch alone when only a loan of another mint is owed', async () => {
+    const loans = [
+      await loan(key(11), alice, honey, 1n),
+      await loan(key(12), alice, hnt, 2n, pool, 3n * H),
+    ]
+
+    expect((await plan({ loans, balance: 5n * H })).due).toEqual([])
+  })
+
   // The watch outlives the loans: after the last one is repaid, rewards are the
   // operator's alone, and a sweep would only cost a fee.
   it('leaves a payout alone when no open loan is repaid from this mint', async () => {
@@ -168,6 +190,7 @@ async function world() {
     watch: bigint,
     held: bigint,
     loanKey: PublicKey,
+    rewardDue = 0n,
   ) {
     accounts.push(
       storedAccount(
@@ -177,7 +200,7 @@ async function world() {
       storedAccount(operatorAccountAddress(owner), await encodeOperatorAccount(owner, 1)),
       storedAccount(
         loanKey,
-        await encodeLoan({ operator: owner, pool, nonce: 1n, rewardMint: mint }),
+        await encodeLoan({ operator: owner, pool, nonce: 1n, rewardMint: mint, rewardDue }),
       ),
     )
     setBalance(owner, mint, held)
@@ -295,6 +318,22 @@ describe('a keeper tick', () => {
     w.setBalance(alice, honey, 405n * H)
 
     expect(await w.keeper.tick()).toHaveLength(1)
+  })
+
+  // What is owed stays owed until the account changes: with no allowance or no tokens,
+  // sending the same sweep every tick would only add fees.
+  it('waits for the balance to change after a sweep that withheld nothing', async () => {
+    const w = await world()
+    await w.operator(alice, honey, 5n * H, 5n * H, key(11), 3n * H)
+
+    expect((await w.keeper.tick())[0]?.outcome).toBe('nothing')
+    w.advance(60 * 60_000)
+    expect(await w.keeper.tick()).toEqual([])
+
+    w.setBalance(alice, honey, 6n * H)
+
+    expect(await w.keeper.tick()).toHaveLength(1)
+    expect(w.sent).toHaveLength(2)
   })
 
   it('still sweeps for others when one sweep fails', async () => {

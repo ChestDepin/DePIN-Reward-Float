@@ -931,6 +931,19 @@
   ],
   "events": [
     {
+      "name": "ManualRepaymentNeeded",
+      "discriminator": [
+        254,
+        196,
+        79,
+        133,
+        47,
+        195,
+        150,
+        145
+      ]
+    },
+    {
       "name": "SweepSkipped",
       "discriminator": [
         162,
@@ -1122,6 +1135,11 @@
       "code": 6032,
       "name": "RewardMintIsStablecoin",
       "msg": "the reward token cannot be the pool's own stablecoin"
+    },
+    {
+      "code": 6033,
+      "name": "ManualRepaymentPending",
+      "msg": "an operator with a loan that needs a manual repayment cannot borrow"
     }
   ],
   "types": [
@@ -1251,6 +1269,20 @@
             }
           },
           {
+            "name": "reward_due",
+            "type": "u64"
+          },
+          {
+            "name": "manual_repayment",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "ManualReason"
+                }
+              }
+            }
+          },
+          {
             "name": "bump",
             "type": "u8"
           }
@@ -1270,6 +1302,62 @@
           },
           {
             "name": "Repaid"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ManualReason",
+      "docs": [
+        "Why a loan's payouts stopped repaying it by themselves, so the operator has to (FR-017)."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Revoked"
+          },
+          {
+            "name": "AllowanceShort"
+          },
+          {
+            "name": "WithdrawnEarly"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ManualRepaymentNeeded",
+      "docs": [
+        "A loan its payouts stopped repaying, and why (FR-017). Emitted when the loan is flagged,",
+        "not on every sweep that finds it still flagged."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan",
+            "type": "pubkey"
+          },
+          {
+            "name": "operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "reason",
+            "type": {
+              "defined": {
+                "name": "ManualReason"
+              }
+            }
+          },
+          {
+            "name": "reward_due",
+            "type": "u64"
           }
         ]
       }

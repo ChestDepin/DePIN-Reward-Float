@@ -129,6 +129,8 @@ impl Setup {
                 apr_bps: 1_000,
                 sweep_bps: 5_000,
                 status: LoanStatus::Active,
+                reward_due: 0,
+                manual_repayment: None,
                 bump: loan_bump,
             },
             operator_account,

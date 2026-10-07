@@ -12,7 +12,7 @@ use mollusk_svm::result::types::{TransactionProgramResult, TransactionResult};
 use reward_float::error::RewardFloatError;
 use reward_float::instructions::verify_attestation::{LIMIT_ATTESTATION_TAG, RATE_ATTESTATION_TAG};
 use reward_float::{
-    Loan, LoanStatus, OperatorAccount, Pool, RewardWatch, LOAN_SEED, MAX_OPEN_LOANS,
+    Loan, LoanStatus, ManualReason, OperatorAccount, Pool, RewardWatch, LOAN_SEED, MAX_OPEN_LOANS,
     NONCE_WINDOW_WORDS, OPERATOR_SEED, POOL_SEED, REPAYMENT_PERIOD, SECONDS_PER_YEAR, VAULT_SEED,
     WATCH_SEED,
 };
@@ -341,6 +341,8 @@ impl Setup {
             apr_bps: APR,
             sweep_bps: 5_000,
             status: LoanStatus::Active,
+            reward_due: 0,
+            manual_repayment: None,
             bump: self.loan_at(nonce).1,
         }
     }
@@ -488,6 +490,8 @@ fn the_first_loan_opens_the_operator_account_and_fixes_the_terms() {
             apr_bps: APR,
             sweep_bps: 5_000,
             status: LoanStatus::Active,
+            reward_due: 0,
+            manual_repayment: None,
             bump: loan_bump,
         })
     );
@@ -814,6 +818,32 @@ fn an_operator_with_an_overdue_loan_cannot_borrow() {
     setup.operator_state = Some(existing);
     let result = setup.run();
     assert_eq!(outcome(&result), refused(RewardFloatError::OperatorOverdue));
+}
+
+#[test]
+fn an_operator_with_a_loan_needing_a_manual_repayment_cannot_borrow() {
+    let mut setup = Setup::first_loan();
+    let mut existing = fresh_operator_account(setup.signer);
+    existing.total_debt = AMOUNT;
+    existing.open_loans = 1;
+    existing.used_nonces[0] = 1 << 7;
+    setup.operator_state = Some(existing);
+    // On another token: the payouts that stopped are not the ones this loan is repaid from.
+    let mut other = setup.existing_loan(7, AMOUNT);
+    other.reward_mint = Pubkey::new_unique();
+    other.manual_repayment = Some(ManualReason::Revoked);
+    setup.pass_open_loan(&other);
+    setup.pool_state.total_borrowed = AMOUNT;
+    setup.vault_balance = DEPOSITS - AMOUNT;
+    setup.attestation.nonce = 8;
+    setup.nonce = 8;
+    setup.amount = LIMIT - AMOUNT;
+    setup.max_apr_bps = 1_100;
+    let result = setup.run();
+    assert_eq!(
+        outcome(&result),
+        refused(RewardFloatError::ManualRepaymentPending)
+    );
 }
 
 #[test]

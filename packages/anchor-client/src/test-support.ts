@@ -32,6 +32,8 @@ export type LoanFields = {
   outstanding?: bigint
   status?: 'active' | 'overdue' | 'repaid'
   rewardMint?: PublicKey
+  rewardDue?: bigint
+  manualRepayment?: 'revoked' | 'allowanceShort' | 'withdrawnEarly' | null
 }
 
 export async function encodeLoan(fields: LoanFields): Promise<Buffer> {
@@ -50,6 +52,11 @@ export async function encodeLoan(fields: LoanFields): Promise<Buffer> {
     aprBps: 1200,
     sweepBps: 5000,
     status: { [fields.status ?? 'active']: {} },
+    rewardDue: new BN((fields.rewardDue ?? 0n).toString()),
+    manualRepayment:
+      fields.manualRepayment === undefined || fields.manualRepayment === null
+        ? null
+        : { [fields.manualRepayment]: {} },
     bump: 254,
   })
 }

@@ -932,6 +932,19 @@ export type RewardFloat = {
   ],
   "events": [
     {
+      "name": "manualRepaymentNeeded",
+      "discriminator": [
+        254,
+        196,
+        79,
+        133,
+        47,
+        195,
+        150,
+        145
+      ]
+    },
+    {
       "name": "sweepSkipped",
       "discriminator": [
         162,
@@ -1123,6 +1136,11 @@ export type RewardFloat = {
       "code": 6032,
       "name": "rewardMintIsStablecoin",
       "msg": "the reward token cannot be the pool's own stablecoin"
+    },
+    {
+      "code": 6033,
+      "name": "manualRepaymentPending",
+      "msg": "an operator with a loan that needs a manual repayment cannot borrow"
     }
   ],
   "types": [
@@ -1252,6 +1270,20 @@ export type RewardFloat = {
             }
           },
           {
+            "name": "rewardDue",
+            "type": "u64"
+          },
+          {
+            "name": "manualRepayment",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "manualReason"
+                }
+              }
+            }
+          },
+          {
             "name": "bump",
             "type": "u8"
           }
@@ -1271,6 +1303,62 @@ export type RewardFloat = {
           },
           {
             "name": "repaid"
+          }
+        ]
+      }
+    },
+    {
+      "name": "manualReason",
+      "docs": [
+        "Why a loan's payouts stopped repaying it by themselves, so the operator has to (FR-017)."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "revoked"
+          },
+          {
+            "name": "allowanceShort"
+          },
+          {
+            "name": "withdrawnEarly"
+          }
+        ]
+      }
+    },
+    {
+      "name": "manualRepaymentNeeded",
+      "docs": [
+        "A loan its payouts stopped repaying, and why (FR-017). Emitted when the loan is flagged,",
+        "not on every sweep that finds it still flagged."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan",
+            "type": "pubkey"
+          },
+          {
+            "name": "operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "rewardMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "reason",
+            "type": {
+              "defined": {
+                "name": "manualReason"
+              }
+            }
+          },
+          {
+            "name": "rewardDue",
+            "type": "u64"
           }
         ]
       }
@@ -2423,6 +2511,19 @@ export const rewardFloatIdl: RewardFloat = {
   ],
   "events": [
     {
+      "name": "manualRepaymentNeeded",
+      "discriminator": [
+        254,
+        196,
+        79,
+        133,
+        47,
+        195,
+        150,
+        145
+      ]
+    },
+    {
       "name": "sweepSkipped",
       "discriminator": [
         162,
@@ -2614,6 +2715,11 @@ export const rewardFloatIdl: RewardFloat = {
       "code": 6032,
       "name": "rewardMintIsStablecoin",
       "msg": "the reward token cannot be the pool's own stablecoin"
+    },
+    {
+      "code": 6033,
+      "name": "manualRepaymentPending",
+      "msg": "an operator with a loan that needs a manual repayment cannot borrow"
     }
   ],
   "types": [
@@ -2743,6 +2849,20 @@ export const rewardFloatIdl: RewardFloat = {
             }
           },
           {
+            "name": "rewardDue",
+            "type": "u64"
+          },
+          {
+            "name": "manualRepayment",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "manualReason"
+                }
+              }
+            }
+          },
+          {
             "name": "bump",
             "type": "u8"
           }
@@ -2762,6 +2882,62 @@ export const rewardFloatIdl: RewardFloat = {
           },
           {
             "name": "repaid"
+          }
+        ]
+      }
+    },
+    {
+      "name": "manualReason",
+      "docs": [
+        "Why a loan's payouts stopped repaying it by themselves, so the operator has to (FR-017)."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "revoked"
+          },
+          {
+            "name": "allowanceShort"
+          },
+          {
+            "name": "withdrawnEarly"
+          }
+        ]
+      }
+    },
+    {
+      "name": "manualRepaymentNeeded",
+      "docs": [
+        "A loan its payouts stopped repaying, and why (FR-017). Emitted when the loan is flagged,",
+        "not on every sweep that finds it still flagged."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan",
+            "type": "pubkey"
+          },
+          {
+            "name": "operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "rewardMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "reason",
+            "type": {
+              "defined": {
+                "name": "manualReason"
+              }
+            }
+          },
+          {
+            "name": "rewardDue",
+            "type": "u64"
           }
         ]
       }

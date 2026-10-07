@@ -72,4 +72,6 @@ pub enum RewardFloatError {
     InvalidConversionTerms,
     #[msg("the reward token cannot be the pool's own stablecoin")]
     RewardMintIsStablecoin,
+    #[msg("an operator with a loan that needs a manual repayment cannot borrow")]
+    ManualRepaymentPending,
 }

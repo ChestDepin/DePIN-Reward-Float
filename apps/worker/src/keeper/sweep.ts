@@ -73,10 +73,13 @@ export function planSweeps(input: {
 
   for (const { address, account: watch } of input.watches) {
     const balance = input.balances.get(address.toBase58()) ?? 0n
-    if (balance <= watch.balance) continue
-
     const loans = input.openLoans.filter((loan) => loan.account.operator.equals(watch.operator))
-    if (!loans.some((loan) => loan.account.rewardMint.equals(watch.rewardMint))) continue
+    const repaidFromMint = loans.filter((loan) => loan.account.rewardMint.equals(watch.rewardMint))
+    if (repaidFromMint.length === 0) continue
+    // Tokens a sweep counted as owed sit below the watch, so nothing new arriving is no
+    // reason to leave them there.
+    const owed = repaidFromMint.some((loan) => loan.account.rewardDue > 0n)
+    if (balance <= watch.balance && !owed) continue
 
     const pause = input.pauses.get(address.toBase58())
     if (pause !== undefined && pause.balance === balance && input.now < pause.until) continue
@@ -99,7 +102,7 @@ export function planSweeps(input: {
       operator: watch.operator,
       rewardMint: watch.rewardMint,
       balance,
-      payout: balance - watch.balance,
+      payout: balance > watch.balance ? balance - watch.balance : 0n,
       openLoans,
     })
   }
@@ -195,8 +198,9 @@ export function createKeeper(deps: KeeperDeps): Keeper {
         logger.info({ watch, signature, payout: plan.payout, events }, 'payout swept')
         return { watch, outcome: 'swept', signature }
       }
-      // No allowance left, or the payout was spent before the sweep: the watch moved and
-      // the program has nothing to say about it.
+      // No allowance, or no tokens owed left on the account: the program flagged the loan,
+      // and the same sweep would withhold nothing until the account changes.
+      pauses.set(watch, { balance: plan.balance, until: Number.POSITIVE_INFINITY })
       logger.info({ watch, signature, payout: plan.payout }, 'sweep withheld nothing')
       return { watch, outcome: 'nothing', signature }
     } catch (error) {

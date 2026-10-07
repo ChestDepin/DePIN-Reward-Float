@@ -203,6 +203,8 @@ pub fn handle_borrow(
         apr_bps,
         sweep_bps,
         status: LoanStatus::Active,
+        reward_due: 0,
+        manual_repayment: None,
         bump: loan_bump,
     };
     pool.track(&loan)?;
@@ -297,6 +299,12 @@ fn accrue_open_loans(
         require!(
             loan.operator == *operator && loan.pool == pool_key && loan.is_open(),
             RewardFloatError::OpenLoansMismatch
+        );
+        // FR-017: while payouts no longer repay a loan by themselves, more credit would rest
+        // on a flow the protocol already knows it cannot reach.
+        require!(
+            loan.manual_repayment.is_none(),
+            RewardFloatError::ManualRepaymentPending
         );
         pool.untrack(&loan)?;
         accrued = accrued

@@ -8,7 +8,7 @@ use anchor_lang::prelude::Pubkey;
 use anchor_lang::solana_program::program_option::COption;
 use anchor_lang::solana_program::program_pack::Pack;
 use anchor_lang::{
-    AccountDeserialize, AccountSerialize, AnchorDeserialize, Discriminator, InstructionData,
+    AccountDeserialize, AccountSerialize, AnchorDeserialize, Discriminator, InstructionData, Space,
     ToAccountMetas,
 };
 use anchor_spl::associated_token::get_associated_token_address;
@@ -18,11 +18,11 @@ use ed25519_dalek::{Signer, SigningKey};
 use mollusk_svm::result::types::{TransactionProgramResult, TransactionResult};
 use reward_float::error::RewardFloatError;
 use reward_float::instructions::verify_attestation::RATE_ATTESTATION_TAG;
-use reward_float::instructions::{SweepSkipped, Swept};
+use reward_float::instructions::{ManualRepaymentNeeded, SweepSkipped, Swept};
 use reward_float::{
-    ConversionVault, Loan, LoanStatus, OperatorAccount, Pool, RewardWatch, CONVERSION_REWARD_SEED,
-    CONVERSION_SEED, CONVERSION_STABLE_SEED, LOAN_SEED, NONCE_WINDOW_WORDS, OPERATOR_SEED,
-    POOL_SEED, REPAYMENT_PERIOD, VAULT_SEED, WATCH_SEED,
+    ConversionVault, Loan, LoanStatus, ManualReason, OperatorAccount, Pool, RewardWatch,
+    CONVERSION_REWARD_SEED, CONVERSION_SEED, CONVERSION_STABLE_SEED, LOAN_SEED, NONCE_WINDOW_WORDS,
+    OPERATOR_SEED, POOL_SEED, REPAYMENT_PERIOD, VAULT_SEED, WATCH_SEED,
 };
 use solana_account::Account;
 use solana_instruction::error::InstructionError;
@@ -174,6 +174,18 @@ impl Run {
             .map(|data| E::try_from_slice(&data[E::DISCRIMINATOR.len()..]).unwrap())
             .collect()
     }
+
+    fn flagged(&self) -> Vec<(Pubkey, ManualReason, u64)> {
+        self.events::<ManualRepaymentNeeded>()
+            .iter()
+            .map(|event| (event.loan, event.reason, event.reward_due))
+            .collect()
+    }
+
+    fn flag(&self, loan: &Pubkey) -> (u64, Option<ManualReason>) {
+        let loan: Loan = self.state(loan);
+        (loan.reward_due, loan.manual_repayment)
+    }
 }
 
 struct Setup {
@@ -318,6 +330,8 @@ impl Setup {
             apr_bps: 1_000,
             sweep_bps,
             status: LoanStatus::Active,
+            reward_due: 0,
+            manual_repayment: None,
             bump: self.loan_at(nonce).1,
         }
     }
@@ -437,7 +451,10 @@ impl Setup {
             mollusk_svm_programs_token::token::keyed_account(),
         ];
         for (index, loan) in self.loans.iter().enumerate() {
-            accounts.push((m(&self.address(index)), program_account(serialize(loan))));
+            // As borrow allocates it: an unset flag serializes a byte shorter than a set one.
+            let mut data = serialize(loan);
+            data.resize(8 + Loan::INIT_SPACE, 0);
+            accounts.push((m(&self.address(index)), program_account(data)));
         }
         let mut instructions = Vec::new();
         for _ in 0..self.sweeps {
@@ -579,9 +596,12 @@ fn outside_the_tolerance_nothing_moves_and_the_reason_is_on_chain() {
     );
     let loan: Loan = run.state(&setup.address(0));
     assert_eq!(loan.outstanding, OUTSTANDING);
-    // The payout stays above the watch, for a sweep once the market is back in range.
+    // The share stays owed to the loan, for a sweep once the market is back in range, and
+    // the watch moves on so that tokens owed leaving the account can be told apart.
+    assert_eq!(run.flag(&setup.address(0)), (HALF, None));
     let watch: RewardWatch = run.state(&setup.watch());
-    assert_eq!(watch.balance, HELD);
+    assert_eq!(watch.balance, HELD + PAYOUT);
+    assert!(run.flagged().is_empty());
 
     assert!(run.events::<Swept>().is_empty());
     let skipped = run.events::<SweepSkipped>();
@@ -650,6 +670,9 @@ fn tokens_moved_out_lower_the_watch_and_nothing_is_withheld() {
     // Otherwise the next payout would first have to refill what was moved out.
     let watch: RewardWatch = run.state(&setup.watch());
     assert_eq!(watch.balance, HELD - 100);
+    // Nothing moved out was owed: what the operator kept of earlier payouts is theirs.
+    assert_eq!(run.flag(&setup.address(0)), (0, None));
+    assert!(run.flagged().is_empty());
 }
 
 #[test]
@@ -694,7 +717,7 @@ fn each_open_loan_of_the_token_takes_its_share_oldest_first() {
 }
 
 #[test]
-fn nothing_is_withheld_past_the_allowance() {
+fn an_allowance_short_of_the_share_takes_what_it_can_and_flags_the_loan() {
     let mut setup = Setup::payout();
     setup.delegate = Some((setup.operator_account(), 200_000_000));
     let run = setup.run();
@@ -702,15 +725,40 @@ fn nothing_is_withheld_past_the_allowance() {
 
     let reward = run.token(&setup.reward_account);
     assert_eq!(
-        (reward.amount, reward.delegated_amount),
-        (HELD + PAYOUT - 200_000_000, 0)
+        (reward.amount, reward.delegated_amount, reward.delegate),
+        (HELD + PAYOUT - 200_000_000, 0, COption::None)
     );
     let loan: Loan = run.state(&setup.address(0));
     assert_eq!(loan.outstanding, OUTSTANDING - 6_181_400);
+    assert_eq!(
+        run.flag(&setup.address(0)),
+        (300_000_000, Some(ManualReason::AllowanceShort))
+    );
+    assert_eq!(
+        run.flagged(),
+        [(setup.address(0), ManualReason::AllowanceShort, 300_000_000)]
+    );
 }
 
 #[test]
-fn without_our_delegation_nothing_is_withheld() {
+fn a_sweep_that_uses_up_the_allowance_flags_a_loan_that_still_owes() {
+    let mut setup = Setup::payout();
+    setup.delegate = Some((setup.operator_account(), HALF));
+    let run = setup.run();
+    assert_eq!(run.outcome(), Ok(()));
+
+    // The whole share went through, but the account is left with no delegate, and the next
+    // payout would otherwise read as a revoked allowance.
+    assert_eq!(run.token(&setup.reward_account).delegate, COption::None);
+    assert_eq!(
+        run.flag(&setup.address(0)),
+        (0, Some(ManualReason::AllowanceShort))
+    );
+    assert_eq!(run.flagged().len(), 1);
+}
+
+#[test]
+fn a_revoked_delegation_flags_the_loan_and_keeps_its_share_owed() {
     for delegate in [None, Some((Pubkey::new_unique(), ALLOWANCE))] {
         let mut setup = Setup::payout();
         setup.delegate = delegate;
@@ -721,7 +769,106 @@ fn without_our_delegation_nothing_is_withheld() {
         let loan: Loan = run.state(&setup.address(0));
         assert_eq!(loan.outstanding, OUTSTANDING);
         assert!(run.events::<Swept>().is_empty());
+        assert_eq!(
+            run.flag(&setup.address(0)),
+            (HALF, Some(ManualReason::Revoked))
+        );
+        assert_eq!(
+            run.flagged(),
+            [(setup.address(0), ManualReason::Revoked, HALF)]
+        );
+        let watch: RewardWatch = run.state(&setup.watch());
+        assert_eq!(watch.balance, HELD + PAYOUT);
     }
+}
+
+#[test]
+fn a_flagged_loan_is_announced_once() {
+    let mut setup = Setup::payout();
+    setup.delegate = None;
+    setup.sweeps = 2;
+    let run = setup.run();
+    assert_eq!(run.outcome(), Ok(()));
+
+    assert_eq!(
+        run.flag(&setup.address(0)),
+        (HALF, Some(ManualReason::Revoked))
+    );
+    assert_eq!(run.flagged().len(), 1);
+}
+
+#[test]
+fn tokens_owed_that_left_the_account_flag_the_loan_as_withdrawn_early() {
+    let mut setup = Setup::payout();
+    setup.loans[0].reward_due = HALF;
+    setup.reward_balance = 100_000_000;
+    setup.watch_balance = HELD + PAYOUT;
+    let run = setup.run();
+    assert_eq!(run.outcome(), Ok(()));
+
+    // What is left still goes to the loan; the rest stays owed.
+    assert_eq!(run.token(&setup.reward_account).amount, 0);
+    let loan: Loan = run.state(&setup.address(0));
+    assert_eq!(loan.outstanding, OUTSTANDING - 3_090_700);
+    assert_eq!(
+        run.flag(&setup.address(0)),
+        (400_000_000, Some(ManualReason::WithdrawnEarly))
+    );
+    assert_eq!(
+        run.flagged(),
+        [(setup.address(0), ManualReason::WithdrawnEarly, 400_000_000)]
+    );
+}
+
+#[test]
+fn what_earlier_payouts_owe_is_withheld_and_the_flag_is_cleared() {
+    let mut setup = Setup::payout();
+    setup.loans[0].reward_due = HALF;
+    setup.loans[0].manual_repayment = Some(ManualReason::Revoked);
+    setup.watch_balance = HELD + PAYOUT;
+    let run = setup.run();
+    assert_eq!(run.outcome(), Ok(()));
+
+    assert_eq!(
+        run.token(&setup.reward_account).amount,
+        HELD + PAYOUT - HALF
+    );
+    let loan: Loan = run.state(&setup.address(0));
+    assert_eq!(loan.outstanding, OUTSTANDING - HALF_PAID);
+    assert_eq!(run.flag(&setup.address(0)), (0, None));
+    assert!(run.flagged().is_empty());
+    let watch: RewardWatch = run.state(&setup.watch());
+    assert_eq!(watch.balance, HELD + PAYOUT - HALF);
+}
+
+#[test]
+fn outside_the_tolerance_a_flagged_loan_stays_flagged() {
+    let mut setup = Setup::payout();
+    setup.conversion_state.spread_bps = 200;
+    setup.loans[0].reward_due = HALF;
+    setup.loans[0].manual_repayment = Some(ManualReason::Revoked);
+    setup.watch_balance = HELD + PAYOUT;
+    let run = setup.run();
+    assert_eq!(run.outcome(), Ok(()));
+
+    assert_eq!(
+        run.flag(&setup.address(0)),
+        (HALF, Some(ManualReason::Revoked))
+    );
+    assert_eq!(run.events::<SweepSkipped>().len(), 1);
+}
+
+#[test]
+fn a_flagged_loan_repaid_by_a_sweep_is_no_longer_flagged() {
+    let mut setup = Setup::payout();
+    setup.loans = vec![setup.loan(1, 1_000_000, 5_000)];
+    setup.loans[0].manual_repayment = Some(ManualReason::WithdrawnEarly);
+    let run = setup.run();
+    assert_eq!(run.outcome(), Ok(()));
+
+    let loan: Loan = run.state(&setup.address(0));
+    assert_eq!(loan.status, LoanStatus::Repaid);
+    assert_eq!(run.flag(&setup.address(0)), (0, None));
 }
 
 #[test]
@@ -735,6 +882,8 @@ fn a_payout_too_small_to_buy_a_unit_of_stablecoin_withholds_nothing() {
     assert_eq!(run.token(&setup.reward_account).amount, HELD + 60);
     assert!(run.events::<Swept>().is_empty());
     assert!(run.events::<SweepSkipped>().is_empty());
+    // Tokens that would sell for nothing are not owed either.
+    assert_eq!(run.flag(&setup.address(0)), (0, None));
 }
 
 #[test]

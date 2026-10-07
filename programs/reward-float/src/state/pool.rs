@@ -294,6 +294,8 @@ mod tests {
             apr_bps,
             sweep_bps: 5_000,
             status: LoanStatus::Active,
+            reward_due: 0,
+            manual_repayment: None,
             bump: 255,
         }
     }

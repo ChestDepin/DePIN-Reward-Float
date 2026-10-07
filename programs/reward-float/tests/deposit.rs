@@ -135,6 +135,8 @@ impl Setup {
             apr_bps: 1_000,
             sweep_bps: 5_000,
             status: LoanStatus::Active,
+            reward_due: 0,
+            manual_repayment: None,
             bump: Pubkey::find_program_address(
                 &[LOAN_SEED, operator.as_ref(), &1u64.to_le_bytes()],
                 &reward_float::ID,

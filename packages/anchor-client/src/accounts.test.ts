@@ -87,6 +87,30 @@ describe('decoding program accounts', () => {
     expect(loan.status).toBe('overdue')
   })
 
+  it('reads a loan that repays by itself as unflagged and owed nothing', async () => {
+    const loan = decodeLoan(await encodeLoan({ operator: key(1), pool: key(2), nonce: 1n }))
+
+    expect(loan.rewardDue).toBe(0n)
+    expect(loan.manualRepayment).toBeNull()
+  })
+
+  it('reads why a loan needs a manual repayment and what payouts still owe it', async () => {
+    for (const reason of ['revoked', 'allowanceShort', 'withdrawnEarly'] as const) {
+      const loan = decodeLoan(
+        await encodeLoan({
+          operator: key(1),
+          pool: key(2),
+          nonce: 1n,
+          rewardDue: 2n ** 64n - 1n,
+          manualRepayment: reason,
+        }),
+      )
+
+      expect(loan.manualRepayment).toBe(reason)
+      expect(loan.rewardDue).toBe(18_446_744_073_709_551_615n)
+    }
+  })
+
   it('reads the operator account and the pool', async () => {
     const operator = decodeOperatorAccount(await encodeOperatorAccount(key(1), 3))
     const pool = decodePool(

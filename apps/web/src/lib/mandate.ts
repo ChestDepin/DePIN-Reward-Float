@@ -1,4 +1,4 @@
-import type { RewardAccount } from '@drf/anchor-client'
+import type { LoanAccount, RewardAccount } from '@drf/anchor-client'
 import {
   applyRepayment,
   debtCeiling,
@@ -98,4 +98,21 @@ export function delegationAfterRepayment(input: {
   const allowance =
     rate === null ? (account.delegatedAmount * ceiling) / before : rewardAllowance(ceiling, rate)
   return allowance === 0n ? { kind: 'revoke' } : { kind: 'set', ceiling, allowance }
+}
+
+export type ManualReason = NonNullable<LoanAccount['manualRepayment']>
+
+const MANUAL_CAUSE: Record<ManualReason, string> = {
+  revoked: 'the permission to withhold rewards from your reward account was revoked.',
+  allowanceShort: 'the permission left is too small for what payouts owe this loan.',
+  withdrawnEarly: 'rewards owed to this loan left the reward account before they were withheld.',
+}
+
+export function manualRepaymentText(reason: ManualReason): string {
+  // With the permission in place, the tokens still owed are taken from the next payout.
+  const permission =
+    reason === 'withdrawnEarly'
+      ? ''
+      : ' Allowing withholding again under Mandate lets the next payout repay it.'
+  return `Automatic repayment stopped: ${MANUAL_CAUSE[reason]} Repay it below.${permission} There is no new loan until it is repaid, or a payout repays all it is owed again.`
 }

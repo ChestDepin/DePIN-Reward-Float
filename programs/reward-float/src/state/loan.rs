@@ -36,6 +36,19 @@ pub enum LoanStatus {
     Repaid,
 }
 
+/// Why a loan's payouts stopped repaying it by themselves, so the operator has to (FR-017).
+#[derive(AnchorSerialize, AnchorDeserialize, InitSpace, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ManualReason {
+    // The reward account no longer has the operator PDA as its delegate.
+    Revoked,
+    // The allowance left could not cover what a payout owed the loan, or a sweep used the
+    // last of it while the loan still owes.
+    AllowanceShort,
+    // Tokens a sweep had already counted as owed to the loan left the account before they
+    // could be withheld.
+    WithdrawnEarly,
+}
+
 #[account]
 #[derive(InitSpace)]
 pub struct Loan {
@@ -65,10 +78,28 @@ pub struct Loan {
     // Share of an incoming reward payout withheld towards this loan (FR-015).
     pub sweep_bps: u16,
     pub status: LoanStatus,
+    // Reward units a sweep measured as owed to this loan but could not withhold: outside
+    // the tolerance, past the allowance or past what the account held. The next sweep takes
+    // them before any share of a new payout, so a payout is never forgotten.
+    pub reward_due: u64,
+    pub manual_repayment: Option<ManualReason>,
     pub bump: u8,
 }
 
 impl Loan {
+    /// Marks the loan as needing a manual repayment and says whether it did not already.
+    ///
+    /// The first cause is kept: it is the one the operator has to undo, and later ones tend
+    /// to follow from it. A sweep that uses up the allowance leaves the account with no
+    /// delegate at all, which would otherwise read as revoked.
+    pub fn flag_manual_repayment(&mut self, reason: ManualReason) -> bool {
+        if self.manual_repayment.is_some() {
+            return false;
+        }
+        self.manual_repayment = Some(reason);
+        true
+    }
+
     /// What the operator owes on this loan right now, as far as the state knows.
     pub fn total_owed(&self) -> Result<u64> {
         self.outstanding
@@ -166,6 +197,8 @@ impl Loan {
         self.outstanding -= principal;
         if self.outstanding == 0 && self.accrued_interest == 0 {
             self.status = LoanStatus::Repaid;
+            self.reward_due = 0;
+            self.manual_repayment = None;
         }
         Ok(Repayment {
             interest,
@@ -224,6 +257,8 @@ mod tests {
             apr_bps: 1_800,
             sweep_bps: 5_000,
             status: LoanStatus::Active,
+            reward_due: 0,
+            manual_repayment: None,
             bump: 252,
         }
     }
@@ -374,6 +409,35 @@ mod tests {
     }
 
     #[test]
+    fn a_loan_is_flagged_once_and_keeps_its_first_reason() {
+        let mut loan = loan();
+        assert!(loan.flag_manual_repayment(ManualReason::AllowanceShort));
+        assert!(!loan.flag_manual_repayment(ManualReason::Revoked));
+        assert_eq!(loan.manual_repayment, Some(ManualReason::AllowanceShort));
+    }
+
+    #[test]
+    fn repaying_the_loan_in_full_clears_its_flag_and_what_payouts_owed_it() {
+        let mut loan = owing(600_000, 0);
+        loan.reward_due = 42;
+        loan.flag_manual_repayment(ManualReason::Revoked);
+        loan.apply_repayment(u64::MAX).unwrap();
+        assert_eq!((loan.reward_due, loan.manual_repayment), (0, None));
+    }
+
+    #[test]
+    fn a_partial_manual_repayment_leaves_the_flag_since_its_cause_is_still_there() {
+        let mut loan = owing(600_000, 0);
+        loan.reward_due = 42;
+        loan.flag_manual_repayment(ManualReason::WithdrawnEarly);
+        loan.apply_repayment(100_000).unwrap();
+        assert_eq!(
+            (loan.reward_due, loan.manual_repayment),
+            (42, Some(ManualReason::WithdrawnEarly))
+        );
+    }
+
+    #[test]
     fn a_repayment_of_nothing_is_refused() {
         let mut loan = owing(600_000, 20_000);
         let err = loan.apply_repayment(0).unwrap_err();
@@ -520,7 +584,8 @@ mod tests {
     fn the_layout_is_the_one_we_declared() {
         // operator 32 + pool 32 + reward_mint 32 + nonce 8 + principal 8
         // + outstanding 8 + accrued_interest 8 + interest_remainder 8 + opened_at 8
-        // + due_at 8 + last_accrual_at 8 + apr_bps 2 + sweep_bps 2 + status 1 + bump 1
-        assert_eq!(Loan::INIT_SPACE, 166);
+        // + due_at 8 + last_accrual_at 8 + apr_bps 2 + sweep_bps 2 + status 1
+        // + reward_due 8 + manual_repayment 2 + bump 1
+        assert_eq!(Loan::INIT_SPACE, 176);
     }
 }
