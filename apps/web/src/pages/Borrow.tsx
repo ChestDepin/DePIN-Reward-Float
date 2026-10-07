@@ -584,7 +584,8 @@ const BorrowForm = ({
                 <Link to="/mandate" className="text-ink underline underline-offset-4">
                   mandate
                 </Link>{' '}
-                page. Withholding is not switched on yet: until it is, the loan is repaid by hand.
+                page. From then on each reward that lands there pays its agreed share to the loan,
+                and the rest stays yours; without the permission, the loan is repaid by hand.
               </p>
             </>
           )}
