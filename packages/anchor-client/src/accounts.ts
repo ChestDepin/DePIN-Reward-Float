@@ -15,6 +15,12 @@ const small = z.number().int().nonnegative()
 const variant = <const Name extends string>(name: Name) =>
   z.strictObject({ [name]: z.strictObject({}) }).transform(() => name)
 
+export const manualReasonSchema = z.union([
+  variant('revoked'),
+  variant('allowanceShort'),
+  variant('withdrawnEarly'),
+])
+
 export const loanSchema = z.object({
   operator: pubkey,
   pool: pubkey,
@@ -31,12 +37,7 @@ export const loanSchema = z.object({
   sweepBps: small,
   status: z.union([variant('active'), variant('overdue'), variant('repaid')]),
   rewardDue: integer,
-  manualRepayment: z.union([
-    z.null(),
-    variant('revoked'),
-    variant('allowanceShort'),
-    variant('withdrawnEarly'),
-  ]),
+  manualRepayment: manualReasonSchema.nullable(),
   bump: small,
 })
 

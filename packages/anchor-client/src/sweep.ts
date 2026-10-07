@@ -2,7 +2,12 @@ import { BN, BorshCoder, EventParser, type Program, utils } from '@coral-xyz/anc
 import type { IssuedRateAttestation } from '@drf/shared/api'
 import { PublicKey, SYSVAR_INSTRUCTIONS_PUBKEY, type TransactionInstruction } from '@solana/web3.js'
 import { z } from 'zod'
-import type { ConversionVaultAccount, OnChain, PoolAccount } from './accounts.ts'
+import {
+  type ConversionVaultAccount,
+  manualReasonSchema,
+  type OnChain,
+  type PoolAccount,
+} from './accounts.ts'
 import { AttestationMismatch, signatureCheck } from './borrow.ts'
 import { type RewardFloat, rewardFloatIdl } from './idl/reward-float.ts'
 import { operatorAccountAddress, rewardFloatProgramId, rewardWatchAddress } from './pda.ts'
@@ -94,7 +99,20 @@ const skippedSchema = z
   })
   .transform((data) => ({ kind: 'skipped' as const, ...data }))
 
-export type SweepEvent = z.infer<typeof sweptSchema> | z.infer<typeof skippedSchema>
+const flaggedSchema = z
+  .object({
+    loan: pubkey,
+    operator: pubkey,
+    rewardMint: pubkey,
+    reason: manualReasonSchema,
+    rewardDue: integer,
+  })
+  .transform((data) => ({ kind: 'manual' as const, ...data }))
+
+export type SweepEvent =
+  | z.infer<typeof sweptSchema>
+  | z.infer<typeof skippedSchema>
+  | z.infer<typeof flaggedSchema>
 
 const parser = new EventParser(rewardFloatProgramId, new BorshCoder(rewardFloatIdl))
 
@@ -103,6 +121,7 @@ export function sweepEvents(logs: readonly string[]): SweepEvent[] {
   for (const event of parser.parseLogs([...logs])) {
     if (event.name === 'swept') events.push(sweptSchema.parse(event.data))
     if (event.name === 'sweepSkipped') events.push(skippedSchema.parse(event.data))
+    if (event.name === 'manualRepaymentNeeded') events.push(flaggedSchema.parse(event.data))
   }
   return events
 }

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { solanaAddressSchema } from '../schemas/primitives.ts'
+import { MANUAL_REPAYMENT_REASONS } from './credit-limit.ts'
 import { wholeNumberSchema } from './payout-history.ts'
 
 const bpsSchema = z.number().int().nonnegative()
@@ -38,9 +39,22 @@ export const skippedEntrySchema = z.object({
   maxSlippageBps: bpsSchema,
 })
 
+// One ManualRepaymentNeeded event: the sweep that stopped repaying the loan, and the
+// reward tokens owed to it then, in the reward mint's base units.
+export const manualRepaymentEntrySchema = z.object({
+  kind: z.literal('manual-repayment'),
+  signature: z.string(),
+  blockTime: momentSchema,
+  loan: solanaAddressSchema,
+  rewardMint: solanaAddressSchema,
+  reason: z.enum(MANUAL_REPAYMENT_REASONS),
+  rewardDue: wholeNumberSchema,
+})
+
 export const withholdingEntrySchema = z.discriminatedUnion('kind', [
   withheldEntrySchema,
   skippedEntrySchema,
+  manualRepaymentEntrySchema,
 ])
 
 export type WithholdingEntry = z.infer<typeof withholdingEntrySchema>

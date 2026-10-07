@@ -1,4 +1,5 @@
 import type { LoanAccount, RewardAccount } from '@drf/anchor-client'
+import type { ManualRepaymentReason } from '@drf/shared/api'
 import {
   applyRepayment,
   debtCeiling,
@@ -106,6 +107,16 @@ const MANUAL_CAUSE: Record<ManualReason, string> = {
   revoked: 'the permission to withhold rewards from your reward account was revoked.',
   allowanceShort: 'the permission left is too small for what payouts owe this loan.',
   withdrawnEarly: 'rewards owed to this loan left the reward account before they were withheld.',
+}
+
+const FROM_API = {
+  revoked: 'revoked',
+  'allowance-short': 'allowanceShort',
+  'withdrawn-early': 'withdrawnEarly',
+} as const satisfies Record<ManualRepaymentReason, ManualReason>
+
+export function manualStopText(reason: ManualRepaymentReason): string {
+  return `Automatic repayment stopped: ${MANUAL_CAUSE[FROM_API[reason]]}`
 }
 
 export function manualRepaymentText(reason: ManualReason): string {

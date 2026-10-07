@@ -334,9 +334,9 @@ describe.skipIf(!parsed.success)('SC-008 — the demo end to end in under 3 min'
         maxSupportedTransactionVersion: 0,
       })
       expect(sweep?.transaction.message.staticAccountKeys[0]?.toBase58()).toBe(keeper.toBase58())
-      const swept = sweepEvents(sweep?.meta?.logMessages ?? []).find(
-        (event) => event.kind === 'swept' && loan !== null && event.loan.equals(loan),
-      )
+      const swept = sweepEvents(sweep?.meta?.logMessages ?? [])
+        .filter((event) => event.kind === 'swept')
+        .find((event) => loan !== null && event.loan.equals(loan))
       expect(swept?.withheld).toBeGreaterThan(0n)
 
       console.log(`site: ${env.DEMO_SITE_URL}, api: ${env.VITE_API_URL}, operator: ${address}`)

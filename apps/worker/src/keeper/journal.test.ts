@@ -57,6 +57,17 @@ const skipped = {
   },
 }
 
+const flagged = (reason: 'revoked' | 'allowanceShort' | 'withdrawnEarly' = 'allowanceShort') => ({
+  name: 'manualRepaymentNeeded' as const,
+  data: {
+    loan: firstLoan,
+    operator: alice,
+    rewardMint: honey,
+    reason: { [reason]: {} },
+    rewardDue: 250n * H,
+  },
+})
+
 // An RPC node over a fixed history: signatures newest first, `until` exclusive, `before`
 // exclusive, at most `limit` per page.
 function fakeChain(history: Landed[]) {
@@ -152,6 +163,8 @@ describe('createSweepJournal', () => {
         deviationBps: 31,
         maxSlippageBps: null,
         remainingDebt: 603_338n,
+        reason: null,
+        rewardDue: null,
         slot: 1_001n,
         blockTime: new Date(1_791_000_001 * 1000),
       },
@@ -177,10 +190,58 @@ describe('createSweepJournal', () => {
         loan: null,
         paid: null,
         remainingDebt: null,
+        reason: null,
+        rewardDue: null,
         withheld: 300n * H,
         deviationBps: 140,
         maxSlippageBps: 100,
       }),
+    ])
+  })
+
+  it('records a flagged loan with its reason and what it is owed, after the withholdings', async () => {
+    const { chain } = fakeChain([landed(1, sweepLogs([swept(), flagged()]))])
+    const memory = memoryStore()
+
+    await createSweepJournal({ chain, store: memory.store, logger: silent }).tick()
+
+    expect(memory.rows()).toEqual([
+      expect.objectContaining({ eventIndex: 0, kind: 'swept' }),
+      {
+        signature: 'sig1',
+        eventIndex: 1,
+        kind: 'manual',
+        operator: alice.toBase58(),
+        rewardMint: honey.toBase58(),
+        loan: firstLoan.toBase58(),
+        withheld: null,
+        paid: null,
+        stablePerTrillionReward: null,
+        deviationBps: null,
+        maxSlippageBps: null,
+        remainingDebt: null,
+        reason: 'allowance-short',
+        rewardDue: 250n * H,
+        slot: 1_001n,
+        blockTime: new Date(1_791_000_001 * 1000),
+      },
+    ])
+  })
+
+  it('writes each reason in the words the api uses', async () => {
+    const { chain } = fakeChain([
+      landed(1, sweepLogs([flagged('revoked')])),
+      landed(2, sweepLogs([flagged('allowanceShort')])),
+      landed(3, sweepLogs([flagged('withdrawnEarly')])),
+    ])
+    const memory = memoryStore()
+
+    await createSweepJournal({ chain, store: memory.store, logger: silent }).tick()
+
+    expect(memory.rows().map((row) => row.reason)).toEqual([
+      'revoked',
+      'allowance-short',
+      'withdrawn-early',
     ])
   })
 
@@ -386,6 +447,54 @@ describe.skipIf(url === undefined)('createDbJournalStore against a live postgres
       .where(eq(sweepEvents.signature, `${PREFIX}c`))
     expect(stored).toHaveLength(1)
     expect(stored[0]?.withheld).toBe(150n * H)
+  })
+
+  it('takes a flagged loan without a withholding, a rate or a deviation', async () => {
+    const store = createDbJournalStore(db, program)
+    const flag: JournalRow = {
+      ...row('e', 0),
+      kind: 'manual',
+      withheld: null,
+      paid: null,
+      stablePerTrillionReward: null,
+      deviationBps: null,
+      remainingDebt: null,
+      reason: 'withdrawn-early',
+      rewardDue: 250n * H,
+    }
+
+    await store.record({ events: [flag], cursor: { signature: 'e', slot: 5n } })
+
+    const [stored] = await db
+      .select()
+      .from(sweepEvents)
+      .where(eq(sweepEvents.signature, `${PREFIX}e`))
+    expect(stored).toMatchObject({ kind: 'manual', reason: 'withdrawn-early', rewardDue: 250n * H })
+  })
+
+  it('refuses a flag without its reason, and a withholding that carries one', async () => {
+    const store = createDbJournalStore(db, program)
+    const flag: JournalRow = {
+      ...row('f', 0),
+      kind: 'manual',
+      withheld: null,
+      paid: null,
+      stablePerTrillionReward: null,
+      deviationBps: null,
+      remainingDebt: null,
+      reason: null,
+      rewardDue: 250n * H,
+    }
+
+    await expect(
+      store.record({ events: [flag], cursor: { signature: 'f', slot: 6n } }),
+    ).rejects.toThrow()
+    await expect(
+      store.record({
+        events: [{ ...row('g', 0), reason: 'revoked' }],
+        cursor: { signature: 'g', slot: 7n },
+      }),
+    ).rejects.toThrow()
   })
 
   it('refuses a withholding without its loan, and keeps the cursor where it was', async () => {

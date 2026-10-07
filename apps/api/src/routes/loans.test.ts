@@ -35,6 +35,8 @@ const swept = (signature: string, slot: number, mint: SolanaAddress = HONEY): St
   deviationBps: 31,
   maxSlippageBps: null,
   remainingDebt: 603_338n,
+  reason: null,
+  rewardDue: null,
   slot: BigInt(slot),
   blockTime: at(slot),
 })
@@ -56,6 +58,26 @@ const skipped = (
   maxSlippageBps: 100,
   paid: null,
   remainingDebt: null,
+  reason: null,
+  rewardDue: null,
+  slot: BigInt(slot),
+  blockTime: at(slot),
+})
+
+const flagged = (signature: string, slot: number, eventIndex = 0): StoredSweepEvent => ({
+  signature,
+  eventIndex,
+  kind: 'manual',
+  rewardMint: HONEY,
+  loan: LOAN,
+  withheld: null,
+  paid: null,
+  stablePerTrillionReward: null,
+  deviationBps: null,
+  maxSlippageBps: null,
+  remainingDebt: null,
+  reason: 'allowance-short',
+  rewardDue: 250n * H,
   slot: BigInt(slot),
   blockTime: at(slot),
 })
@@ -145,6 +167,43 @@ describe('buildWithholdings', () => {
     expect(built.entries[0]).toMatchObject({ attempts: 2, worstDeviationBps: 140 })
   })
 
+  it('turns a loan flagged for a manual repayment into an entry with its reason', () => {
+    const built = buildWithholdings({
+      operator: OPERATOR,
+      rows: [swept('a', 3), flagged('a', 3, 1)],
+      limit: 10,
+    })
+
+    expect(withholdingsSchema.parse(built)).toEqual(built)
+    expect(built.entries).toEqual([
+      expect.objectContaining({ kind: 'withheld', signature: 'a' }),
+      {
+        kind: 'manual-repayment',
+        signature: 'a',
+        blockTime: at(3).toISOString(),
+        loan: LOAN,
+        rewardMint: HONEY,
+        reason: 'allowance-short',
+        rewardDue: '250000000000',
+      },
+    ])
+  })
+
+  // A flag withholds nothing, so the skips on either side of it are still one run.
+  it('keeps a run of skips going across a flag on the same mint', () => {
+    const built = buildWithholdings({
+      operator: OPERATOR,
+      rows: [skipped('c', 9, 120), flagged('b', 7), skipped('a', 5, 140)],
+      limit: 10,
+    })
+
+    expect(built.entries.map((entry) => [entry.kind, entry.signature])).toEqual([
+      ['skipped', 'c'],
+      ['manual-repayment', 'b'],
+    ])
+    expect(built.entries[0]).toMatchObject({ attempts: 2 })
+  })
+
   it('says the journal is cut short when as many rows came back as were asked for', () => {
     expect(
       buildWithholdings({ operator: OPERATOR, rows: [swept('b', 9), swept('a', 3)], limit: 2 })
@@ -166,6 +225,16 @@ describe('buildWithholdings', () => {
         limit: 10,
       }),
     ).toThrow('orphan')
+  })
+
+  it('refuses a flag row without its reason', () => {
+    expect(() =>
+      buildWithholdings({
+        operator: OPERATOR,
+        rows: [{ ...flagged('unexplained', 1), reason: null }],
+        limit: 10,
+      }),
+    ).toThrow(/unexplained.* reason/)
   })
 })
 
@@ -262,6 +331,7 @@ describe.skipIf(url === undefined)('createDbWithholdingSource against a live pos
         stored({ ...swept('b', 7), eventIndex: 0 }),
         stored(skipped('c', 9, 140)),
         stored(swept('d', 8), OTHER),
+        stored(flagged('e', 1)),
       ])
   })
 
@@ -278,9 +348,24 @@ describe.skipIf(url === undefined)('createDbWithholdingSource against a live pos
       ['b', 0],
       ['b', 1],
       ['a', 0],
+      ['e', 0],
     ])
     expect(rows[0]).toMatchObject({ kind: 'skipped', maxSlippageBps: 100, loan: null })
     expect(rows[1]).toMatchObject({ withheld: 150n * H, remainingDebt: 603_338n, loan: LOAN })
+  })
+
+  it('reads a flag back with its reason and what the loan is owed', async () => {
+    const rows = await createDbWithholdingSource(db).read(OPERATOR, 10)
+
+    expect(rows.at(-1)).toMatchObject({
+      kind: 'manual',
+      loan: LOAN,
+      reason: 'allowance-short',
+      rewardDue: 250n * H,
+      withheld: null,
+      stablePerTrillionReward: null,
+      deviationBps: null,
+    })
   })
 
   it('reads no more than it is asked for', async () => {

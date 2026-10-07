@@ -9,6 +9,7 @@ import {
   type MandateLoan,
   mandateState,
   manualRepaymentText,
+  manualStopText,
 } from './mandate'
 
 function key(seed: number): PublicKey {
@@ -244,5 +245,20 @@ describe('why a loan needs a manual repayment', () => {
     expect(manualRepaymentText('revoked')).toMatch(/Mandate/)
     expect(manualRepaymentText('allowanceShort')).toMatch(/Mandate/)
     expect(manualRepaymentText('withdrawnEarly')).not.toMatch(/Mandate/)
+  })
+})
+
+// The journal says when withholding stopped and why; what to do is on the loan itself.
+describe('a flag in the withholdings journal', () => {
+  it('names the cause the api reports in the words the loan uses', () => {
+    expect(manualStopText('revoked')).toMatch(/^Automatic repayment stopped: .*was revoked\.$/)
+    expect(manualStopText('allowance-short')).toMatch(/permission left is too small/)
+    expect(manualStopText('withdrawn-early')).toMatch(/left the reward account before/)
+  })
+
+  it('leaves what to do to the loan, which knows whether it is still flagged', () => {
+    for (const reason of ['revoked', 'allowance-short', 'withdrawn-early'] as const) {
+      expect(manualStopText(reason)).not.toMatch(/Repay it below|Mandate/)
+    }
   })
 })

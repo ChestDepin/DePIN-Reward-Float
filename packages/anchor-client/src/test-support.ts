@@ -156,7 +156,7 @@ export async function issuedRate(
   })
 }
 
-type EventName = 'swept' | 'sweepSkipped'
+type EventName = 'swept' | 'sweepSkipped' | 'manualRepaymentNeeded'
 
 function eventData(name: EventName, data: Record<string, unknown>): string {
   const event = rewardFloatIdl.events.find((e) => e.name === name)

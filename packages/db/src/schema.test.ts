@@ -1,3 +1,4 @@
+import { MANUAL_REPAYMENT_REASONS } from '@drf/shared/api'
 import { PAYOUT_CADENCES } from '@drf/shared/schemas'
 import type { PgTable } from 'drizzle-orm/pg-core'
 import { getTableConfig } from 'drizzle-orm/pg-core'
@@ -182,18 +183,39 @@ describe('sweep_events', () => {
     expect(primaryKeyOf(sweepEvents)).toEqual(['signature', 'event_index'])
   })
 
-  it('tells a withholding from a skip', () => {
-    expect(columnOf(sweepEvents, 'kind').enumValues).toEqual(['swept', 'skipped'])
+  it('tells a withholding from a skip and from a loan flagged for a manual repayment', () => {
+    expect(columnOf(sweepEvents, 'kind').enumValues).toEqual(['swept', 'skipped', 'manual'])
+  })
+
+  it('names the reason a loan was flagged in the words the api uses', () => {
+    expect(columnOf(sweepEvents, 'reason').enumValues).toEqual([...MANUAL_REPAYMENT_REASONS])
   })
 
   it('holds amounts and the rate in base units, never as a number', () => {
-    for (const name of ['withheld', 'paid', 'stable_per_trillion_reward', 'remaining_debt']) {
+    for (const name of [
+      'withheld',
+      'paid',
+      'stable_per_trillion_reward',
+      'remaining_debt',
+      'reward_due',
+    ]) {
       expect(columnOf(sweepEvents, name).getSQLType()).toBe('numeric(20, 0)')
     }
   })
 
-  it('carries a loan, a payment and a debt only for a withholding, a tolerance only for a skip', () => {
-    for (const name of ['loan', 'paid', 'remaining_debt', 'max_slippage_bps']) {
+  // A flag converts nothing: it has no withholding, no rate and no deviation to carry.
+  it('leaves to the kind which fields an event carries', () => {
+    for (const name of [
+      'loan',
+      'withheld',
+      'paid',
+      'stable_per_trillion_reward',
+      'deviation_bps',
+      'remaining_debt',
+      'max_slippage_bps',
+      'reason',
+      'reward_due',
+    ]) {
       expect(columnOf(sweepEvents, name).notNull).toBe(false)
     }
     expect(getTableConfig(sweepEvents).checks.map((constraint) => constraint.name)).toEqual([

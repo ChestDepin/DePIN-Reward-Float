@@ -57,6 +57,8 @@ export type NetworkCreditLimit = z.infer<typeof networkCreditLimitSchema>
 
 export const MANUAL_REPAYMENT_REASONS = ['revoked', 'allowance-short', 'withdrawn-early'] as const
 
+export type ManualRepaymentReason = (typeof MANUAL_REPAYMENT_REASONS)[number]
+
 // FR-017: read live from devnet and kept next to the limits, not in place of them. The
 // limit still stands and comes back with the repayment; what stops borrowing is the
 // program (`ManualRepaymentPending`), and on every network at once. `unknown` is FR-025:

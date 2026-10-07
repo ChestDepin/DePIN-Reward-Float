@@ -64,6 +64,13 @@
       "when": 1791325104808,
       "tag": "0008_sweep_journal",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791372421453,
+      "tag": "0009_manual_repayment_events",
+      "breakpoints": true
     }
   ]
 }

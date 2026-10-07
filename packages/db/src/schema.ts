@@ -1,3 +1,4 @@
+import { MANUAL_REPAYMENT_REASONS } from '@drf/shared/api'
 import { PAYOUT_CADENCES, type PayoutSource, type SolanaAddress } from '@drf/shared/schemas'
 import { sql } from 'drizzle-orm'
 import {
@@ -151,9 +152,12 @@ export const indexerCursors = pgTable(
   (table) => [primaryKey({ columns: [table.wallet, table.tokenAccount] })],
 )
 
-export const sweepEventKindEnum = pgEnum('sweep_event_kind', ['swept', 'skipped'])
+export const sweepEventKindEnum = pgEnum('sweep_event_kind', ['swept', 'skipped', 'manual'])
 
-// Devnet: the journal of FR-016, read from the program's Swept and SweepSkipped events.
+export const manualRepaymentReasonEnum = pgEnum('manual_repayment_reason', MANUAL_REPAYMENT_REASONS)
+
+// Devnet: the journal of FR-016, read from the program's Swept, SweepSkipped and
+// ManualRepaymentNeeded events.
 // The chain stays the truth; the table is its index, as `payouts` is for mainnet.
 export const sweepEvents = pgTable(
   'sweep_events',
@@ -165,12 +169,14 @@ export const sweepEvents = pgTable(
     rewardMint: address('reward_mint').notNull(),
     loan: address('loan'),
     // Swept: what was withheld. SweepSkipped: what would have been.
-    withheld: baseUnits('withheld').notNull(),
+    withheld: baseUnits('withheld'),
     paid: baseUnits('paid'),
-    stablePerTrillionReward: baseUnits('stable_per_trillion_reward').notNull(),
-    deviationBps: integer('deviation_bps').notNull(),
+    stablePerTrillionReward: baseUnits('stable_per_trillion_reward'),
+    deviationBps: integer('deviation_bps'),
     maxSlippageBps: integer('max_slippage_bps'),
     remainingDebt: baseUnits('remaining_debt'),
+    reason: manualRepaymentReasonEnum('reason'),
+    rewardDue: baseUnits('reward_due'),
     slot: bigint('slot', { mode: 'bigint' }).notNull(),
     blockTime: moment('block_time').notNull(),
   },
@@ -179,8 +185,9 @@ export const sweepEvents = pgTable(
     index('sweep_events_operator_slot_idx').on(table.operator, table.slot),
     check(
       'sweep_events_fields_match_kind',
-      sql`(${table.kind} = 'swept') = (${table.loan} is not null and ${table.paid} is not null and ${table.remainingDebt} is not null and ${table.maxSlippageBps} is null)
-        and (${table.kind} = 'skipped') = (${table.loan} is null and ${table.paid} is null and ${table.remainingDebt} is null and ${table.maxSlippageBps} is not null)`,
+      sql`(${table.kind} = 'swept' and ${table.loan} is not null and ${table.withheld} is not null and ${table.paid} is not null and ${table.stablePerTrillionReward} is not null and ${table.deviationBps} is not null and ${table.remainingDebt} is not null and ${table.maxSlippageBps} is null and ${table.reason} is null and ${table.rewardDue} is null)
+        or (${table.kind} = 'skipped' and ${table.loan} is null and ${table.withheld} is not null and ${table.paid} is null and ${table.stablePerTrillionReward} is not null and ${table.deviationBps} is not null and ${table.remainingDebt} is null and ${table.maxSlippageBps} is not null and ${table.reason} is null and ${table.rewardDue} is null)
+        or (${table.kind} = 'manual' and ${table.loan} is not null and ${table.withheld} is null and ${table.paid} is null and ${table.stablePerTrillionReward} is null and ${table.deviationBps} is null and ${table.remainingDebt} is null and ${table.maxSlippageBps} is null and ${table.reason} is not null and ${table.rewardDue} is not null)`,
     ),
   ],
 )

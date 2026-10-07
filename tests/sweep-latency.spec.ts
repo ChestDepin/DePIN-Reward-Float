@@ -281,9 +281,9 @@ describe.skipIf(!parsed.success)('SC-005 — a reward withheld within 2 min of a
         if (newest === undefined) throw new Error(`sample ${sample}: no signature on the loan`)
         const sweep = await transactionOf(newest.signature)
         expect(sweep.transaction.message.staticAccountKeys[0]?.toBase58()).toBe(keeper.toBase58())
-        const swept = sweepEvents(sweep.meta?.logMessages ?? []).find(
-          (event) => event.kind === 'swept' && event.loan.equals(loan),
-        )
+        const swept = sweepEvents(sweep.meta?.logMessages ?? [])
+          .filter((event) => event.kind === 'swept')
+          .find((event) => event.loan.equals(loan))
         expect(swept?.withheld).toBeGreaterThan(0n)
 
         const arrived = await transactionOf(payout)

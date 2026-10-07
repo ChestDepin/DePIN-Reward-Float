@@ -203,6 +203,60 @@ describe('sweep events', () => {
     ])
   })
 
+  // The program emits the flag after every withholding of the same sweep.
+  it('reads a loan flagged for a manual repayment, with its reason and what it is owed', () => {
+    const logs = sweepLogs([
+      {
+        name: 'swept',
+        data: {
+          loan: key(11),
+          operator,
+          rewardMint,
+          withheld: new BN(40),
+          paid: new BN(96),
+          stablePerTrillionReward: new BN(2_406_662),
+          deviationBps: 31,
+          remainingDebt: new BN(603_338),
+        },
+      },
+      {
+        name: 'manualRepaymentNeeded',
+        data: {
+          loan: key(11),
+          operator,
+          rewardMint,
+          reason: { allowanceShort: {} },
+          rewardDue: new BN(250_000_000_000),
+        },
+      },
+    ])
+
+    expect(sweepEvents(logs)).toEqual([
+      expect.objectContaining({ kind: 'swept', loan: key(11) }),
+      {
+        kind: 'manual',
+        loan: key(11),
+        operator,
+        rewardMint,
+        reason: 'allowanceShort',
+        rewardDue: 250_000_000_000n,
+      },
+    ])
+  })
+
+  it('reads each reason a loan is flagged for', () => {
+    for (const reason of ['revoked', 'allowanceShort', 'withdrawnEarly'] as const) {
+      const logs = sweepLogs([
+        {
+          name: 'manualRepaymentNeeded',
+          data: { loan: key(11), operator, rewardMint, reason: { [reason]: {} }, rewardDue: 0n },
+        },
+      ])
+
+      expect(sweepEvents(logs)).toEqual([expect.objectContaining({ kind: 'manual', reason })])
+    }
+  })
+
   // A sweep with no new payout moves nothing and says nothing.
   it('reads a sweep that emitted nothing as no events', () => {
     expect(sweepEvents(sweepLogs([]))).toEqual([])

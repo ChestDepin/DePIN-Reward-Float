@@ -86,6 +86,7 @@ describe('migrations', () => {
         { idx: 6, tag: '0006_limit_per_network' },
         { idx: 7, tag: '0007_stored_profile_states' },
         { idx: 8, tag: '0008_sweep_journal' },
+        { idx: 9, tag: '0009_manual_repayment_events' },
       ],
     })
   })
@@ -98,6 +99,36 @@ describe('migrations', () => {
     expect(journal).toContain('PRIMARY KEY("signature","event_index")')
     expect(journal).toContain('sweep_events_fields_match_kind')
     expect(journal).toContain('sweep_events_operator_slot_idx')
+  })
+
+  // The migrator runs every pending file in one transaction, and a value added to an enum
+  // there cannot be used before it commits, so the check naming it would fail: the type is
+  // rebuilt instead, as for the profile status.
+  it('rebuilds the event kind type without losing the check on it', () => {
+    const sql = readFileSync(
+      path.join(MIGRATIONS_FOLDER, '0009_manual_repayment_events.sql'),
+      'utf8',
+    )
+
+    expect(sql).not.toContain('ADD VALUE')
+    expect(sql).toContain('DROP CONSTRAINT "sweep_events_fields_match_kind"')
+    expect(sql).toContain(
+      `CREATE TYPE "public"."sweep_event_kind" AS ENUM('swept', 'skipped', 'manual')`,
+    )
+    expect(sql.lastIndexOf('ADD CONSTRAINT "sweep_events_fields_match_kind"')).toBeGreaterThan(
+      sql.indexOf(`CREATE TYPE "public"."sweep_event_kind"`),
+    )
+  })
+
+  // The journal walked past the flags before it could read them; from the start again it
+  // writes them, and the rows it already has stay as they are.
+  it('sends the journal back to the start of the program history', () => {
+    const sql = readFileSync(
+      path.join(MIGRATIONS_FOLDER, '0009_manual_repayment_events.sql'),
+      'utf8',
+    )
+
+    expect(sql).toContain('DELETE FROM "sweep_journal_cursors"')
   })
 
   // Джерело виплати не перейменоване, а перестворене: колонки міняють і тип, і

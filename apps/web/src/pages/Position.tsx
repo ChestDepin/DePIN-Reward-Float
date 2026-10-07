@@ -39,6 +39,7 @@ import { formatBps, formatCost, formatRate, formatTokens, formatUsd } from '../l
 import {
   delegationAfterRepayment,
   manualRepaymentText,
+  manualStopText,
   type RepaymentDelegation,
 } from '../lib/mandate'
 import { useAddressParam, useOperatorIdentity } from '../lib/wallet'
@@ -299,7 +300,7 @@ function tokensText(baseUnits: string, mint: SolanaAddress): string {
     : `${formatTokens(baseUnits, token.decimals)} ${token.symbol}`
 }
 
-function rateText(entry: WithholdingEntry): string {
+function rateText(entry: Exclude<WithholdingEntry, { kind: 'manual-repayment' }>): string {
   const token = rewardToken(new PublicKey(entry.rewardMint))
   return token === null
     ? `${entry.stablePerTrillionReward} per 10^12 base units`
@@ -379,6 +380,31 @@ const Journal = ({ address }: { address: SolanaAddress }) => {
                             : formatCost(BigInt(entry.remainingDebt))}
                         </td>
                       </tr>
+                    ) : entry.kind === 'manual-repayment' ? (
+                      <Fragment key={`${entry.signature}:${entry.loan}:manual`}>
+                        <tr className="text-amber">
+                          <td className="whitespace-nowrap py-2">
+                            <Explorer signature={entry.signature}>
+                              {minute(entry.blockTime)}
+                            </Explorer>
+                          </td>
+                          <td className={cell}>—</td>
+                          <td className={cell}>—</td>
+                          <td className={cell}>—</td>
+                          <td className={cell}>—</td>
+                          <td className={cell}>—</td>
+                        </tr>
+                        <tr className="border-b border-rule text-amber">
+                          <td
+                            colSpan={6}
+                            className="pb-2 text-[11px] sm:text-[12px] leading-relaxed"
+                          >
+                            {manualStopText(entry.reason)}
+                            {entry.rewardDue !== '0' &&
+                              ` ${tokensText(entry.rewardDue, entry.rewardMint)} owed to the loan were not withheld.`}
+                          </td>
+                        </tr>
+                      </Fragment>
                     ) : (
                       <Fragment key={entry.signature}>
                         <tr className="text-amber">

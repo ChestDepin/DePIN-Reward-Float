@@ -1,5 +1,5 @@
 import { type Database, sweepEvents } from '@drf/db'
-import type { WithholdingEntry, Withholdings } from '@drf/shared/api'
+import type { ManualRepaymentReason, WithholdingEntry, Withholdings } from '@drf/shared/api'
 import type { SolanaAddress } from '@drf/shared/schemas'
 import { asc, desc, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
@@ -12,15 +12,17 @@ export const JOURNAL_ROWS = 1_000
 export type StoredSweepEvent = {
   signature: string
   eventIndex: number
-  kind: 'swept' | 'skipped'
+  kind: 'swept' | 'skipped' | 'manual'
   rewardMint: SolanaAddress
   loan: SolanaAddress | null
-  withheld: bigint
+  withheld: bigint | null
   paid: bigint | null
-  stablePerTrillionReward: bigint
-  deviationBps: number
+  stablePerTrillionReward: bigint | null
+  deviationBps: number | null
   maxSlippageBps: number | null
   remainingDebt: bigint | null
+  reason: ManualRepaymentReason | null
+  rewardDue: bigint | null
   slot: bigint
   blockTime: Date
 }
@@ -42,6 +44,27 @@ export function buildWithholdings(input: {
   const runs = new Map<SolanaAddress, SkippedEntry>()
 
   for (const row of input.rows) {
+    const { withheld, stablePerTrillionReward, deviationBps } = row
+    if (row.kind === 'manual') {
+      if (row.loan === null || row.reason === null || row.rewardDue === null) {
+        throw new Error(`flag ${row.signature}#${row.eventIndex} is missing its loan or its reason`)
+      }
+      entries.push({
+        kind: 'manual-repayment',
+        signature: row.signature,
+        blockTime: row.blockTime.toISOString(),
+        loan: row.loan,
+        rewardMint: row.rewardMint,
+        reason: row.reason,
+        rewardDue: row.rewardDue.toString(),
+      })
+      continue
+    }
+
+    if (withheld === null || stablePerTrillionReward === null || deviationBps === null) {
+      throw new Error(`sweep ${row.signature}#${row.eventIndex} is missing its conversion`)
+    }
+
     if (row.kind === 'swept') {
       if (row.loan === null || row.paid === null || row.remainingDebt === null) {
         throw new Error(`withholding ${row.signature}#${row.eventIndex} is missing its loan fields`)
@@ -53,10 +76,10 @@ export function buildWithholdings(input: {
         blockTime: row.blockTime.toISOString(),
         loan: row.loan,
         rewardMint: row.rewardMint,
-        withheld: row.withheld.toString(),
+        withheld: withheld.toString(),
         paid: row.paid.toString(),
-        stablePerTrillionReward: row.stablePerTrillionReward.toString(),
-        deviationBps: row.deviationBps,
+        stablePerTrillionReward: stablePerTrillionReward.toString(),
+        deviationBps,
         remainingDebt: row.remainingDebt.toString(),
       })
       continue
@@ -69,7 +92,7 @@ export function buildWithholdings(input: {
     if (run !== undefined) {
       run.attempts += 1
       run.firstAt = row.blockTime.toISOString()
-      run.worstDeviationBps = Math.max(run.worstDeviationBps, row.deviationBps)
+      run.worstDeviationBps = Math.max(run.worstDeviationBps, deviationBps)
       continue
     }
     const entry: SkippedEntry = {
@@ -79,10 +102,10 @@ export function buildWithholdings(input: {
       attempts: 1,
       firstAt: row.blockTime.toISOString(),
       lastAt: row.blockTime.toISOString(),
-      attempted: row.withheld.toString(),
-      stablePerTrillionReward: row.stablePerTrillionReward.toString(),
-      deviationBps: row.deviationBps,
-      worstDeviationBps: row.deviationBps,
+      attempted: withheld.toString(),
+      stablePerTrillionReward: stablePerTrillionReward.toString(),
+      deviationBps,
+      worstDeviationBps: deviationBps,
       maxSlippageBps: row.maxSlippageBps,
     }
     runs.set(row.rewardMint, entry)
@@ -110,6 +133,8 @@ export function createDbWithholdingSource(db: Database): WithholdingSource {
             deviationBps: sweepEvents.deviationBps,
             maxSlippageBps: sweepEvents.maxSlippageBps,
             remainingDebt: sweepEvents.remainingDebt,
+            reason: sweepEvents.reason,
+            rewardDue: sweepEvents.rewardDue,
             slot: sweepEvents.slot,
             blockTime: sweepEvents.blockTime,
           })

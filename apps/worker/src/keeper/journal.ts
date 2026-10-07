@@ -1,7 +1,7 @@
-import { rewardFloatProgramId, sweepEvents } from '@drf/anchor-client'
+import { rewardFloatProgramId, type SweepEvent, sweepEvents } from '@drf/anchor-client'
 import { type Database, sweepEvents as sweepEventsTable, sweepJournalCursors } from '@drf/db'
 import { solanaAddressSchema } from '@drf/shared/schemas'
-import { Connection } from '@solana/web3.js'
+import { Connection, type PublicKey } from '@solana/web3.js'
 import { eq } from 'drizzle-orm'
 import type { Logger } from 'pino'
 import { z } from 'zod'
@@ -62,27 +62,77 @@ type Listed = z.infer<typeof signaturesSchema>[number]
 
 const failed = (err: unknown) => err !== null && err !== undefined
 
+const REASONS = {
+  revoked: 'revoked',
+  allowanceShort: 'allowance-short',
+  withdrawnEarly: 'withdrawn-early',
+} as const satisfies Record<
+  Extract<SweepEvent, { kind: 'manual' }>['reason'],
+  NonNullable<JournalRow['reason']>
+>
+
+function fieldsOf(event: SweepEvent) {
+  const address = (key: PublicKey) => solanaAddressSchema.parse(key.toBase58())
+  const common = { operator: address(event.operator), rewardMint: address(event.rewardMint) }
+  switch (event.kind) {
+    case 'swept':
+      return {
+        ...common,
+        kind: event.kind,
+        loan: address(event.loan),
+        withheld: event.withheld,
+        paid: event.paid,
+        stablePerTrillionReward: event.stablePerTrillionReward,
+        deviationBps: event.deviationBps,
+        maxSlippageBps: null,
+        remainingDebt: event.remainingDebt,
+        reason: null,
+        rewardDue: null,
+      }
+    case 'skipped':
+      return {
+        ...common,
+        kind: event.kind,
+        loan: null,
+        withheld: event.withheld,
+        paid: null,
+        stablePerTrillionReward: event.stablePerTrillionReward,
+        deviationBps: event.deviationBps,
+        maxSlippageBps: event.maxSlippageBps,
+        remainingDebt: null,
+        reason: null,
+        rewardDue: null,
+      }
+    case 'manual':
+      return {
+        ...common,
+        kind: event.kind,
+        loan: address(event.loan),
+        withheld: null,
+        paid: null,
+        stablePerTrillionReward: null,
+        deviationBps: null,
+        maxSlippageBps: null,
+        remainingDebt: null,
+        reason: REASONS[event.reason],
+        rewardDue: event.rewardDue,
+      }
+  }
+}
+
 function rowsOf(signature: string, slot: number, blockTime: number, logs: string[]): JournalRow[] {
   return sweepEvents(logs).map((event, eventIndex) => ({
     signature,
     eventIndex,
-    kind: event.kind,
-    operator: solanaAddressSchema.parse(event.operator.toBase58()),
-    rewardMint: solanaAddressSchema.parse(event.rewardMint.toBase58()),
-    loan: event.kind === 'swept' ? solanaAddressSchema.parse(event.loan.toBase58()) : null,
-    withheld: event.withheld,
-    paid: event.kind === 'swept' ? event.paid : null,
-    stablePerTrillionReward: event.stablePerTrillionReward,
-    deviationBps: event.deviationBps,
-    maxSlippageBps: event.kind === 'skipped' ? event.maxSlippageBps : null,
-    remainingDebt: event.kind === 'swept' ? event.remainingDebt : null,
+    ...fieldsOf(event),
     slot: BigInt(slot),
     blockTime: new Date(blockTime * 1000),
   }))
 }
 
-// The journal of FR-016: Swept and SweepSkipped as the program emitted them, whoever sent
-// the sweep. It walks the program's own signatures, the one address every sweep names.
+// The journal of FR-016 and FR-017: Swept, SweepSkipped and ManualRepaymentNeeded as the
+// program emitted them, whoever sent the sweep. It walks the program's own signatures, the
+// one address every sweep names.
 export function createSweepJournal(deps: JournalDeps): { tick(): Promise<number> } {
   const { chain, store } = deps
   const pageSize = deps.pageSize ?? PAGE_SIZE
