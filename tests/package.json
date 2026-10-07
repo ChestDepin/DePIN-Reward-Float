@@ -8,7 +8,8 @@
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "bench:limit": "vitest run --config vitest.bench.config.ts limit-latency first-screen-latency",
-    "bench:borrow": "vitest run --config vitest.bench.config.ts borrow-latency"
+    "bench:borrow": "vitest run --config vitest.bench.config.ts borrow-latency",
+    "bench:sweep": "vitest run --config vitest.bench.config.ts sweep-latency"
   },
   "dependencies": {
     "@drf/anchor-client": "workspace:^",
