@@ -4,5 +4,5 @@ import { defineConfig } from 'vitest/config'
 // рядків і додає десятки секунд до кожного коміта. Запускається окремо —
 // `pnpm bench:limit`.
 export default defineConfig({
-  test: { exclude: ['**/node_modules/**', '**/*-latency.spec.ts'] },
+  test: { exclude: ['**/node_modules/**', '**/*-latency.spec.ts', 'demo.spec.ts'] },
 })

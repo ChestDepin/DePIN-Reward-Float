@@ -19,6 +19,7 @@
     "bench:limit": "pnpm --filter @drf/tests bench:limit",
     "bench:borrow": "pnpm --filter @drf/tests bench:borrow",
     "bench:sweep": "pnpm --filter @drf/tests bench:sweep",
+    "bench:demo": "pnpm --filter @drf/tests bench:demo",
     "seed:pool": "pnpm --filter @drf/anchor-client seed:pool"
   },
   "devDependencies": {

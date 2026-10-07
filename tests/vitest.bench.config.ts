@@ -4,7 +4,7 @@ const TEN_MINUTES = 600_000
 
 export default defineConfig({
   test: {
-    include: ['**/*-latency.spec.ts'],
+    include: ['**/*-latency.spec.ts', 'demo.spec.ts'],
     // Замір, чиїх чисел не видно, нічого не доводить: типовий репортер ховає
     // `console` за успішним тестом.
     reporters: ['verbose'],
