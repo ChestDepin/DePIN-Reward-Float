@@ -33,15 +33,16 @@ jobs:
 
       - run: pnpm --filter @drf/web typecheck
 
-      # The site is served from https://<owner>.github.io/<repo>/, so the base
-      # is the repository name, never a literal. VITE_API_URL is baked into the
+      # The site is served from https://<owner>.github.io/<repo>/: the landing is
+      # its root and the terminal lives under app/, so the base is the repository
+      # name plus app/, never a literal. VITE_API_URL is baked into the
       # bundle at this point. An unset repository variable arrives as an empty
       # string, which the page rejects as a URL and dies on — so it is dropped,
       # and the page falls back to localhost and shows every screen as
       # unreachable until the variable points at a deployed API.
       - run: |
           if [ -z "$VITE_API_URL" ]; then unset VITE_API_URL; fi
-          pnpm --filter @drf/web exec vite build --base "/${{ github.event.repository.name }}/"
+          pnpm --filter @drf/web exec vite build --base "/${{ github.event.repository.name }}/app/"
         env:
           VITE_API_URL: ${{ vars.VITE_API_URL }}
           # Borrowing reads devnet. Left unset, the borrow page says lending is not
@@ -50,13 +51,19 @@ jobs:
           VITE_STABLE_MINT: ${{ vars.VITE_STABLE_MINT }}
           VITE_REWARD_MINTS: ${{ vars.VITE_REWARD_MINTS }}
 
-      # Pages answers any unknown path with 404.html. A copy of the app shell
-      # there turns a direct link to /limit/<address> into a client-side route.
-      - run: cp apps/web/dist/index.html apps/web/dist/404.html
+      # Pages answers any unknown path with the 404.html at the site root only —
+      # a nested app/404.html is ignored. The app shell there turns a direct link
+      # to app/limit/<address> into a client-side route, and moves a link from
+      # before the terminal lived under app/ to its new place.
+      - run: |
+          mkdir site
+          cp -r apps/landing/. site/
+          cp -r apps/web/dist site/app
+          cp apps/web/dist/index.html site/404.html
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: apps/web/dist
+          path: site
 
   deploy:
     needs: build

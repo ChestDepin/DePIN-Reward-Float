@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DePIN Reward Float — borrow against your future rewards</title>
+<meta name="description" content="A stablecoin loan for DePIN operators, sized from your own payout history and paid down by a capped share of each reward as it lands. On Solana devnet.">
+<link rel="canonical" href="https://chestdepin.github.io/DePIN-Reward-Float/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://chestdepin.github.io/DePIN-Reward-Float/">
+<meta property="og:title" content="DePIN Reward Float — borrow against your future rewards">
+<meta property="og:description" content="Sized from your own payout history, paid down by a capped share of each reward as it lands. On Solana devnet.">
+<meta property="og:image" content="https://chestdepin.github.io/DePIN-Reward-Float/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#F3F4ED">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&amp;display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="bar wrap">
+  <a class="brand" href="./">
+    <img src="assets/favicon.svg" alt="" width="42" height="31">
+    <span>DePIN Reward Float</span>
+  </a>
+  <nav aria-label="Site">
+    <a href="https://github.com/ChestDepin/DePIN-Reward-Float">GitHub</a>
+    <a class="button" href="app/">Open the terminal</a>
+  </nav>
+</header>
+
+<section class="hero wrap">
+  <h1>Borrow against the rewards your hardware hasn't earned yet.</h1>
+  <p class="lede">Connect the wallet your Hivemapper rewards land in. See your limit and the arithmetic behind it, borrow USDC with one signature — and from then on a capped share of each payout goes to the debt before it reaches you. The rest is yours.</p>
+  <p class="actions">
+    <a class="button" href="app/">Open the terminal</a>
+    <a class="button ghost" href="app/lookup">Check your wallet's limit</a>
+  </p>
+</section>
+
+<section class="run wrap" aria-labelledby="run-title">
+  <h2 id="run-title" class="visually-hidden">One run, recorded</h2>
+  <figure>
+    <div class="stage">
+    <div class="dots" aria-hidden="true"></div>
+    <div class="screen">
+      <video controls muted playsinline preload="none" width="1280" height="720" poster="assets/demo-poster.webp" aria-label="Recording of the terminal: a wallet connects, sees a $40 limit, borrows $1, a reward lands and the loan shows as repaid.">
+        <source src="assets/demo.webm" type="video/webm">
+      </video>
+    </div>
+    </div>
+
+    <div class="track">
+      <p class="scale"><span>0 s</span><span>one cell = one second</span><span>23 s</span></p>
+      <div class="cells" aria-hidden="true">
+        <i class="e"></i><i class="e"></i><i></i><i></i><i></i><i></i><i class="d"></i><i class="w"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="r"></i>
+      </div>
+      <ol class="events">
+        <li style="--at: 0.9"><b>0.9 s</b> connected</li>
+        <li class="low" style="--at: 1.8"><b>1.8 s</b> limit $40</li>
+        <li style="--at: 6.5"><b>6.5 s</b> $1 loan confirmed</li>
+        <li class="low w" style="--at: 7.4"><b>7.4 s</b> reward lands</li>
+        <li class="end" style="--at: 22.6"><b>22.6 s</b> repaid, on screen</li>
+      </ol>
+      <p class="key">
+        <span><i class="d"></i>debt open</span>
+        <span><i class="w"></i>withheld for the loan</span>
+        <span><i class="r"></i>repaid</span>
+      </p>
+    </div>
+
+    <figcaption>One recorded run on Solana devnet, 7 October 2026: 22.6 s from opening the terminal to the loan shown as repaid, against a budget of three minutes. The same path measured without recording took 21.0 s. The wallet's mainnet payout history was a marked fixture for these runs — the key that signs has never run a dashcam — and was deleted afterwards. Everything from the loan on is real devnet.</figcaption>
+  </figure>
+</section>
+
+<main class="wrap journal">
+
+  <article>
+    <div class="tag"><b>limit</b><span>1.8 s into the run</span></div>
+    <div>
+      <h2>Your limit, with its working.</h2>
+      <p>Twelve months of your payouts are read from mainnet, and a transfer counts only if it comes from the network's own payout source. The limit is your median monthly flow in tokens at a 30-day median price, lowered for gaps and for volatility — each factor shown with its sign. Fewer than six paid months out of twelve: no limit, and the month you will get one.</p>
+      <dl class="proof">
+        <div><dt>payouts misread, 20 real wallets</dt><dd>0</dd></div>
+        <div><dt>first screen with the number, p95</dt><dd>1.66 s <small>/ 2 s</small></dd></div>
+      </dl>
+    </div>
+  </article>
+
+  <article>
+    <div class="tag"><b>borrow</b><span>6.5 s</span></div>
+    <div>
+      <h2>The whole cost before you sign.</h2>
+      <p>Before the wallet asks for a signature you see what the loan costs in USDC for its whole term, at a fixed annual rate. Then one transaction. The limit reaches the program only as a signed attestation that works once and expires in five minutes, and a loan that would take your debt above it is refused.</p>
+      <dl class="proof">
+        <div><dt>sign → confirmed, p95, n = 20</dt><dd>1.9 s <small>/ 5 s</small></dd></div>
+        <div><dt>debt above limit, random sequences</dt><dd>0 <small>of 1000</small></dd></div>
+      </dl>
+    </div>
+  </article>
+
+  <article>
+    <div class="tag"><b>delegate</b><span>signed with the loan</span></div>
+    <div>
+      <h2>A cap you set, and take back in one transaction.</h2>
+      <p>You let the protocol draw on your HONEY account up to the debt plus interest — never more. The account stays yours. A single revoke ends it without asking anyone; the loan is then marked for manual repayment and says why.</p>
+    </div>
+  </article>
+
+  <article class="swept">
+    <div class="tag"><b>swept</b><span>7.4 s</span></div>
+    <div>
+      <h2>Each payout: the agreed share to the debt, the rest stays.</h2>
+      <p>The keeper sees the payout land, withholds the share, converts it and pays the debt in one operation. If the price has moved beyond tolerance, nothing is taken — the reward stays in your wallet, and the line says why.</p>
+      <dl class="proof">
+        <div><dt>payout → smaller debt, slowest of 10</dt><dd>12.7 s <small>/ 2 min</small></dd></div>
+      </dl>
+    </div>
+  </article>
+
+  <article>
+    <div class="tag"><b class="filled">repaid</b><span>22.6 s</span></div>
+    <div>
+      <h2>The last payout takes exactly what is left.</h2>
+      <p>When the share is more than the debt, only the remainder is withheld and the loan closes in the same operation. The run above, as its journal records it:</p>
+      <div class="ledger" role="region" aria-label="Withholding from the recorded run" tabindex="0">
+        <table>
+          <thead><tr><th scope="col">when, UTC</th><th scope="col">withheld</th><th scope="col">rate, $ per token</th><th scope="col">deviation</th><th scope="col">repaid</th><th scope="col">loan left</th></tr></thead>
+          <tbody><tr><td><a href="https://explorer.solana.com/tx/4WfC6DPzFQ3o9jb9JDCzXWK2JBT7jyJRTxyAaKskofz3vKA63pjqbzh9uW2m9jwpr6LFKUuc3QeBMb5YPekYTsNQ?cluster=devnet">2026-10-07 12:29</a></td><td class="w">393.67 HONEY</td><td>$0.002547</td><td>0.31%</td><td>$1.00</td><td>repaid</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </article>
+
+  <section class="before" aria-labelledby="before">
+    <h2 id="before">Before you sign</h2>
+    <p>What this build is, and what it is not.</p>
+    <ul>
+      <li>It runs on devnet. No real money moves, and there is no mainnet deployment.</li>
+      <li>The HONEY it withholds is a devnet stand-in we mint, converted through a devnet vault, not a market. That proves the withholding — not that mainnet HONEY sells within tolerance at size, nor that Hivemapper's own payouts pass through unchanged.</li>
+      <li>Helium: your HNT history is shown, but no limit. The chain records when you claimed, not what the hotspot earned.</li>
+      <li>The loan is unsecured. Nothing is seized if you stop paying; overdue handling is not built yet.</li>
+      <li>One key signs every limit. Whoever holds it can issue any limit; it is visible on chain and can be rotated, not removed.</li>
+      <li>You can move a payout out before it is withheld. The protocol does not stop you.</li>
+      <li>The program has not been audited. The lenders' side of the pool is not open yet.</li>
+    </ul>
+  </section>
+</main>
+
+<footer class="wrap foot">
+  <div class="mark">
+    <img src="assets/logo.svg" alt="DePIN Reward Float" width="88" height="85">
+    <div>
+      <b>DePIN Reward Float</b>
+      <a href="https://github.com/ChestDepin/DePIN-Reward-Float">github.com/ChestDepin/DePIN-Reward-Float</a>
+      <span>No licence is published in the repository.</span>
+    </div>
+  </div>
+  <div class="program">
+    <span>program, devnet</span>
+    <a href="https://explorer.solana.com/address/DYAhSCwm3zAdB5Li9wKxJknjgvN7SkQpQMRhpNoJdJJJ?cluster=devnet">DYAhSCwm3zAdB5Li9wKxJknjgvN7SkQpQMRhpNoJdJJJ</a>
+  </div>
+</footer>
+
+</body>
+</html>

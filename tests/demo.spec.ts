@@ -76,8 +76,10 @@ const demoEnvSchema = z.object({
   ),
   DEMO_SITE_URL: z.preprocess(
     unsetWhenEmpty,
-    z.url({ protocol: /^https$/ }).default('https://chestdepin.github.io/DePIN-Reward-Float/'),
+    z.url({ protocol: /^https$/ }).default('https://chestdepin.github.io/DePIN-Reward-Float/app/'),
   ),
+  // The landing's hero is a recording of this run; set, the browser films it here.
+  DEMO_VIDEO_DIR: z.preprocess(unsetWhenEmpty, z.string().optional()),
 })
 const parsed = demoEnvSchema.safeParse(process.env)
 
@@ -179,7 +181,12 @@ describe.skipIf(!parsed.success)('SC-008 — the demo end to end in under 3 min'
     }
 
     browser = await chromium.launch()
-    const context = await browser.newContext()
+    const viewport = { width: 1280, height: 720 }
+    const context = await browser.newContext(
+      env.DEMO_VIDEO_DIR === undefined
+        ? {}
+        : { viewport, recordVideo: { dir: env.DEMO_VIDEO_DIR, size: viewport } },
+    )
     await installDemoWallet(context, { wallet: operator, name: WALLET_NAME })
     page = await context.newPage()
   })

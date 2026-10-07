@@ -194,10 +194,13 @@ one address among them.
 
 ### Deploying to GitHub Pages
 
-`.github/workflows/pages.yml` builds `apps/web` on every push to `main` and publishes it
-to `https://<owner>.github.io/<repo>/`. The base path is taken from the repository name,
-and `404.html` is a copy of the app shell so a direct link to `/limit/<address>` reaches
-the router instead of GitHub's 404. Three things are set outside the repository:
+`.github/workflows/pages.yml` publishes one site on every push to `main`: the landing page
+(`apps/landing`, static files, no build) at `https://<owner>.github.io/<repo>/`, and
+`apps/web` under `app/`. The app's base path is taken from the repository name plus `app/`.
+Pages serves a custom 404 only from the site root, so the root `404.html` is a copy of the
+app shell: a direct link to `app/limit/<address>` reaches the router instead of GitHub's
+404, and a link from before the move (`/<repo>/limit/<address>`) is rewritten to its
+`app/` address. Three things are set outside the repository:
 
 1. **Settings → Pages → Source: GitHub Actions** — once, by the repository owner.
 2. **Repository variable `VITE_API_URL`** — the `https://` origin of a deployed API.
