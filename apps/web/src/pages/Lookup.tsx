@@ -1,12 +1,13 @@
 import { solanaAddressSchema } from '@drf/shared/schemas'
 import { type FormEvent, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useOperatorIdentity, useWalletConnection } from '../lib/wallet'
+import { useConnectFailure, useOperatorIdentity, useWalletConnection } from '../lib/wallet'
 
 const Lookup = () => {
   const navigate = useNavigate()
   const identity = useOperatorIdentity()
-  const { select, connect } = useWalletConnection()
+  const { select } = useWalletConnection()
+  const connectFailure = useConnectFailure()
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
 
@@ -70,8 +71,10 @@ const Lookup = () => {
                 key={wallet}
                 type="button"
                 onClick={() => {
+                  // The provider connects the selected wallet itself; its answer comes
+                  // back through useConnectFailure.
+                  connectFailure.ask()
                   select(wallet as Parameters<typeof select>[0])
-                  connect().catch(() => setError('the wallet refused to connect'))
                 }}
                 className="border border-rule px-3 py-2 text-[12px] text-ink hover:border-ink"
               >
@@ -79,6 +82,10 @@ const Lookup = () => {
               </button>
             ))}
           </div>
+        )}
+
+        {identity.status === 'disconnected' && connectFailure.text !== null && (
+          <p className="mt-3 text-[12px] sm:text-[13px] text-ink">{connectFailure.text}</p>
         )}
 
         {identity.status === 'connecting' && (

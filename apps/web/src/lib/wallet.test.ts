@@ -1,5 +1,11 @@
+import {
+  WalletConnectionError,
+  WalletSignTransactionError,
+  WalletWindowClosedError,
+} from '@solana/wallet-adapter-base'
+import { WalletNotSelectedError } from '@solana/wallet-adapter-react'
 import { describe, expect, it } from 'vitest'
-import { deriveIdentity } from './wallet'
+import { connectFailureText, deriveIdentity } from './wallet'
 
 const REAL_ADDRESS = '4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy'
 
@@ -56,5 +62,24 @@ describe('deriveIdentity', () => {
     expect(
       deriveIdentity({ wallets: ['Phantom'], connecting: true, address: REAL_ADDRESS }),
     ).toMatchObject({ status: 'connected' })
+  })
+})
+
+describe('connectFailureText', () => {
+  it("tells the operator the wallet refused when the wallet's own connect fails", () => {
+    expect(connectFailureText(new WalletConnectionError('User rejected the request.'))).toBe(
+      'the wallet refused to connect',
+    )
+    expect(connectFailureText(new WalletWindowClosedError())).toBe('the wallet refused to connect')
+  })
+
+  // The race that used to print "refused" while the wallet was connecting: connect() called
+  // right after select() runs against no wallet at all.
+  it('says nothing about an error the app made before the wallet was asked', () => {
+    expect(connectFailureText(new WalletNotSelectedError())).toBeNull()
+  })
+
+  it('leaves signing errors to the page that asked for the signature', () => {
+    expect(connectFailureText(new WalletSignTransactionError('rejected'))).toBeNull()
   })
 })
