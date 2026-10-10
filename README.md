@@ -265,3 +265,7 @@ On Windows the program is built inside WSL, invoked from PowerShell (Git Bash ma
 ```powershell
 wsl.exe -e bash /mnt/<path-to-repo>/scripts/wsl-build.sh
 ```
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).

@@ -3,6 +3,7 @@ name = "reward-float"
 version = "0.1.0"
 edition = "2021"
 description = "Micro-loans to DePIN operators against future token rewards"
+license = "Apache-2.0"
 
 [lib]
 crate-type = ["cdylib", "lib"]
