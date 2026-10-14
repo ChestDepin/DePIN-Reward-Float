@@ -171,6 +171,7 @@ struct Coverage {
     deposited: AtomicU32,
     deposited_above_par: AtomicU32,
     refused_a_deposit_under_a_share: AtomicU32,
+    earned_without_acting: AtomicU32,
 }
 
 static COVERAGE: Coverage = Coverage {
@@ -188,6 +189,7 @@ static COVERAGE: Coverage = Coverage {
     deposited: AtomicU32::new(0),
     deposited_above_par: AtomicU32::new(0),
     refused_a_deposit_under_a_share: AtomicU32::new(0),
+    earned_without_acting: AtomicU32::new(0),
 };
 
 fn hit(counter: &AtomicU32) {
@@ -413,6 +415,9 @@ impl World {
     }
 
     fn step(&mut self, op: Op) -> Result<(), TestCaseError> {
+        let value = self.value();
+        let open: Vec<bool> = self.loans.iter().map(|loan| loan.open).collect();
+        let worth: Vec<u64> = (0..LENDERS).map(|lender| self.worth(lender)).collect();
         match op {
             Op::Wait(seconds) => self.wait(seconds),
             Op::Borrow {
@@ -429,7 +434,32 @@ impl World {
             } => self.repay(operator, loan, pay)?,
             Op::Deposit { lender, amount } => self.deposit(lender, amount)?,
         }
+        let depositor = match op {
+            Op::Deposit { lender, .. } => Some(lender),
+            _ => None,
+        };
+        if depositor.is_none() {
+            // FR-018a: no step but a deposit changes the shares, and none takes value from
+            // them. A loan repaid in full leaves its sub-unit interest behind, which can
+            // take the pool's value down by one unit and no more.
+            let closed = open
+                .iter()
+                .zip(&self.loans)
+                .filter(|(was_open, loan)| **was_open && !loan.open)
+                .count() as u128;
+            prop_assert!(self.value() + closed >= value);
+        }
+        for lender in 0..LENDERS {
+            if Some(lender) != depositor && self.worth(lender) > worth[lender] {
+                hit(&COVERAGE.earned_without_acting);
+            }
+        }
         self.check_books()
+    }
+
+    // A lender's part of the pool's value, by shares and rounded down.
+    fn worth(&self, lender: usize) -> u64 {
+        (self.value() * u128::from(self.lenders[lender].shares) / u128::from(self.shares)) as u64
     }
 
     fn wait(&mut self, seconds: i64) {
@@ -728,7 +758,11 @@ impl World {
         );
 
         prop_assert_eq!(pool.total_shares, self.shares);
-        for lender in &self.lenders {
+        let mut lenders_worth = 0u128;
+        for (index, lender) in self.lenders.iter().enumerate() {
+            let worth = pool.value_of_shares(lender.shares, self.now).unwrap();
+            prop_assert_eq!(worth, self.worth(index));
+            lenders_worth += u128::from(worth);
             match self.stored(&lender.share) {
                 None => prop_assert_eq!(lender.shares, 0),
                 Some(_) => {
@@ -738,6 +772,7 @@ impl World {
                 }
             }
         }
+        prop_assert!(lenders_worth <= self.value());
 
         for (index, operator) in self.operators.iter().enumerate() {
             if self.stored(&operator.account).is_none() {
@@ -946,6 +981,7 @@ fn no_sequence_lends_past_the_limit_or_past_the_free_liquidity_or_dilutes_a_shar
             "refused a deposit under a share",
             &COVERAGE.refused_a_deposit_under_a_share,
         ),
+        ("earned without acting", &COVERAGE.earned_without_acting),
     ];
     for (name, counter) in witnessed {
         let count = counter.load(Ordering::Relaxed);

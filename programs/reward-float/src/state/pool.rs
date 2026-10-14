@@ -118,6 +118,14 @@ impl Pool {
             .map_err(|_| error!(RewardFloatError::MathOverflow))
     }
 
+    // Everything the pool holds and is owed at `now`, interest earned up to this second
+    // included. Three u64 sums, so it cannot overflow u128.
+    fn value(&self, now: i64) -> Result<u128> {
+        Ok(u128::from(self.total_deposits)
+            + u128::from(self.accrued_interest)
+            + u128::from(self.unbooked_interest(now)?))
+    }
+
     /// Shares a deposit of `amount` buys at `now` (FR-018).
     ///
     /// A share is priced on everything the pool is owed as well as what it holds, interest
@@ -130,9 +138,7 @@ impl Pool {
         if self.total_shares == 0 {
             return Ok(amount);
         }
-        let value = u128::from(self.total_deposits)
-            + u128::from(self.accrued_interest)
-            + u128::from(self.unbooked_interest(now)?);
+        let value = self.value(now)?;
         // A pool with shares and no value has lost everything, which is only reachable
         // through write-downs (FR-021). Selling shares in it at any price would be wrong.
         let shares = (u128::from(amount) * u128::from(self.total_shares))
@@ -141,6 +147,28 @@ impl Pool {
         let shares = u64::try_from(shares).map_err(|_| error!(RewardFloatError::MathOverflow))?;
         require!(shares > 0, RewardFloatError::DepositTooSmall);
         Ok(shares)
+    }
+
+    /// What `shares` of the pool are worth at `now` (FR-018a).
+    ///
+    /// Interest reaches lenders through the price of a share, not through their accounts:
+    /// it is the pool's value, interest earned up to this second included, split by shares.
+    /// It is the same value a deposit is priced on, so a share is bought and redeemed at
+    /// one price. Rounded down: the lenders who stay must not lose to the rounding.
+    pub fn value_of_shares(&self, shares: u64, now: i64) -> Result<u64> {
+        // A share account never holds more than the pool issued. If one ever claims to, it
+        // is a broken book, not a lender to pay.
+        require!(shares <= self.total_shares, RewardFloatError::MathOverflow);
+        if shares == 0 {
+            return Ok(0);
+        }
+        // shares · value can pass u128 in a large pool; split value by total_shares first.
+        // With shares ≤ total, neither product below can, and the floor is the same.
+        let total = u128::from(self.total_shares);
+        let value = self.value(now)?;
+        let shares = u128::from(shares);
+        let worth = shares * (value / total) + shares * (value % total) / total;
+        u64::try_from(worth).map_err(|_| error!(RewardFloatError::MathOverflow))
     }
 
     /// Annual rate a new loan of `amount` is issued at.
@@ -459,6 +487,92 @@ mod tests {
             pool.shares_for_deposit(u64::MAX, NOW).unwrap(),
             u64::MAX / 2
         );
+    }
+
+    #[test]
+    fn lenders_split_the_interest_by_their_shares_without_doing_anything() {
+        let mut pool = pool();
+        pool.total_shares = 100_000_000;
+        pool.total_deposits = 100_000_000;
+        pool.total_borrowed = 100_000_000;
+        pool.track(&loan(100_000_000, 1_000, NOW)).unwrap();
+        let (first, second) = (75_000_000, 25_000_000);
+        assert_eq!(pool.value_of_shares(first, NOW).unwrap(), 75_000_000);
+        // A year of 10 % on the whole pool, and nobody touched a share or a loan.
+        let later = NOW + SECONDS_PER_YEAR;
+        assert_eq!(pool.value_of_shares(first, later).unwrap(), 82_500_000);
+        assert_eq!(pool.value_of_shares(second, later).unwrap(), 27_500_000);
+    }
+
+    #[test]
+    fn booked_interest_is_shared_like_unbooked_interest() {
+        let mut pool = pool();
+        pool.total_shares = 4;
+        pool.total_deposits = 1_000;
+        pool.accrued_interest = 200;
+        assert_eq!(pool.value_of_shares(1, NOW).unwrap(), 300);
+    }
+
+    #[test]
+    fn shares_just_bought_are_worth_no_more_than_was_paid() {
+        let mut pool = pool();
+        pool.total_shares = 100_000_000;
+        pool.total_deposits = 100_000_000;
+        pool.total_borrowed = 100_000_000;
+        pool.track(&loan(100_000_000, 1_317, NOW - 86_400)).unwrap();
+        let amount = 33_333_333;
+        let shares = pool.shares_for_deposit(amount, NOW).unwrap();
+        pool.total_shares += shares;
+        pool.total_deposits += amount;
+        let worth = pool.value_of_shares(shares, NOW).unwrap();
+        // A round trip at one price: no gain, and a loss of no more than the rounding,
+        // which is under one share on the way in and one unit on the way out.
+        let one_share = pool.value_of_shares(1, NOW).unwrap();
+        assert!(worth <= amount && amount - worth <= one_share + 1);
+    }
+
+    #[test]
+    fn the_value_of_shares_is_rounded_down() {
+        let mut pool = pool();
+        pool.total_shares = 3;
+        pool.total_deposits = 4;
+        // 4 / 3 = 1.33 units a share.
+        assert_eq!(pool.value_of_shares(1, NOW).unwrap(), 1);
+        assert_eq!(pool.value_of_shares(3, NOW).unwrap(), 4);
+    }
+
+    #[test]
+    fn no_shares_are_worth_nothing() {
+        assert_eq!(pool().value_of_shares(0, NOW).unwrap(), 0);
+        let mut pool = pool();
+        pool.total_shares = 10;
+        pool.total_deposits = 10;
+        assert_eq!(pool.value_of_shares(0, NOW).unwrap(), 0);
+    }
+
+    #[test]
+    fn more_shares_than_the_pool_issued_fails_loud() {
+        let mut pool = pool();
+        pool.total_shares = 10;
+        pool.total_deposits = 10;
+        let err = pool.value_of_shares(11, NOW).unwrap_err();
+        assert_eq!(code(err), code(error!(RewardFloatError::MathOverflow)));
+        let err = self::pool().value_of_shares(1, NOW).unwrap_err();
+        assert_eq!(code(err), code(error!(RewardFloatError::MathOverflow)));
+    }
+
+    #[test]
+    fn the_value_of_shares_in_the_largest_pool_does_not_wrap() {
+        let mut pool = pool();
+        pool.total_shares = u64::MAX;
+        pool.total_deposits = u64::MAX;
+        pool.accrued_interest = u64::MAX;
+        assert_eq!(
+            pool.value_of_shares(u64::MAX / 2, NOW).unwrap(),
+            u64::MAX - 1
+        );
+        let err = pool.value_of_shares(u64::MAX, NOW).unwrap_err();
+        assert_eq!(code(err), code(error!(RewardFloatError::MathOverflow)));
     }
 
     #[test]
