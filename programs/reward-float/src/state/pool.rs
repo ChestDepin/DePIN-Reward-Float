@@ -11,6 +11,22 @@ pub const POOL_SEED: &[u8] = b"pool";
 /// Seed prefix of the vault token account PDA: `["vault", pool]`.
 pub const VAULT_SEED: &[u8] = b"vault";
 
+/// Why a withdrawal paid less than the lender asked for (FR-020).
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WithdrawalLimit {
+    // The lender asked for more than their shares are worth, and got all they are worth.
+    Position,
+    // The rest of what the lender asked for is out in loans, and comes back as they are repaid.
+    FreeLiquidity,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Withdrawal {
+    pub paid: u64,
+    pub shares: u64,
+    pub limited_by: Option<WithdrawalLimit>,
+}
+
 #[account]
 #[derive(InitSpace)]
 pub struct Pool {
@@ -169,6 +185,45 @@ impl Pool {
         let shares = u128::from(shares);
         let worth = shares * (value / total) + shares * (value % total) / total;
         u64::try_from(worth).map_err(|_| error!(RewardFloatError::MathOverflow))
+    }
+
+    /// What a lender holding `shares` gets for asking to withdraw up to `max_amount` at
+    /// `now`, and how many of the shares that costs them (FR-020).
+    ///
+    /// Asking for more than is free pays what is free rather than nothing: the lender gets
+    /// what the pool can give now and is told why it is less. The shares are burned at the
+    /// price a deposit pays, rounded up, so the lenders who stay do not lose to rounding.
+    pub fn withdrawal(&self, shares: u64, max_amount: u64, now: i64) -> Result<Withdrawal> {
+        require!(max_amount > 0, RewardFloatError::InvalidAmount);
+        let worth = self.value_of_shares(shares, now)?;
+        require!(worth > 0, RewardFloatError::NothingToWithdraw);
+        let free = self.free_liquidity()?;
+        require!(free > 0, RewardFloatError::NoFreeLiquidity);
+
+        let paid = max_amount.min(worth).min(free);
+        let limited_by = if paid == max_amount {
+            None
+        } else if paid == worth {
+            Some(WithdrawalLimit::Position)
+        } else {
+            Some(WithdrawalLimit::FreeLiquidity)
+        };
+        // Paying out all the shares are worth burns all of them: a remainder worth less
+        // than a unit could never be withdrawn, and is left to the lenders who stay.
+        if paid == worth {
+            return Ok(Withdrawal {
+                paid,
+                shares,
+                limited_by,
+            });
+        }
+        // paid < worth ≤ shares · value / total, so this is under `shares` and fits u64.
+        let burned = (u128::from(paid) * u128::from(self.total_shares)).div_ceil(self.value(now)?);
+        Ok(Withdrawal {
+            paid,
+            shares: u64::try_from(burned).map_err(|_| error!(RewardFloatError::MathOverflow))?,
+            limited_by,
+        })
     }
 
     /// Annual rate a new loan of `amount` is issued at.
@@ -573,6 +628,157 @@ mod tests {
         );
         let err = pool.value_of_shares(u64::MAX, NOW).unwrap_err();
         assert_eq!(code(err), code(error!(RewardFloatError::MathOverflow)));
+    }
+
+    // 1000 shares for 1250 units: 1.25 a share. The lender holds 400 of them, worth 500.
+    fn priced_pool() -> Pool {
+        let mut pool = pool();
+        pool.total_shares = 1_000;
+        pool.total_deposits = 1_000;
+        pool.accrued_interest = 250;
+        pool
+    }
+
+    #[test]
+    fn a_withdrawal_pays_what_was_asked_and_burns_the_shares_it_is_worth() {
+        assert_eq!(
+            priced_pool().withdrawal(400, 125, NOW).unwrap(),
+            Withdrawal {
+                paid: 125,
+                shares: 100,
+                limited_by: None,
+            }
+        );
+    }
+
+    #[test]
+    fn the_shares_burned_are_rounded_up() {
+        // 1 unit is 0.8 of a share: the lender gives up a whole one, so that the lenders
+        // who stay do not lose to the rounding.
+        assert_eq!(priced_pool().withdrawal(400, 1, NOW).unwrap().shares, 1);
+    }
+
+    #[test]
+    fn asking_for_more_than_the_shares_are_worth_pays_them_all_out() {
+        assert_eq!(
+            priced_pool().withdrawal(400, u64::MAX, NOW).unwrap(),
+            Withdrawal {
+                paid: 500,
+                shares: 400,
+                limited_by: Some(WithdrawalLimit::Position),
+            }
+        );
+    }
+
+    #[test]
+    fn leaving_the_pool_burns_every_share_even_past_the_rounding() {
+        let mut pool = pool();
+        pool.total_shares = 10;
+        pool.total_deposits = 3;
+        // Six shares at 0.3 are worth 1.8 and pay 1, which is priced at 3.33 shares.
+        // Burning only 4 would leave two shares worth 0.6 that could never be withdrawn.
+        assert_eq!(
+            pool.withdrawal(6, u64::MAX, NOW).unwrap(),
+            Withdrawal {
+                paid: 1,
+                shares: 6,
+                limited_by: Some(WithdrawalLimit::Position),
+            }
+        );
+    }
+
+    #[test]
+    fn a_withdrawal_past_the_free_liquidity_pays_what_is_free_and_says_so() {
+        let mut pool = priced_pool();
+        pool.total_borrowed = 700;
+        assert_eq!(
+            pool.withdrawal(400, 500, NOW).unwrap(),
+            Withdrawal {
+                paid: 300,
+                shares: 240,
+                limited_by: Some(WithdrawalLimit::FreeLiquidity),
+            }
+        );
+    }
+
+    #[test]
+    fn a_withdrawal_is_priced_on_interest_earned_up_to_this_second() {
+        let mut pool = pool();
+        pool.total_shares = 100_000_000;
+        pool.total_deposits = 100_000_000;
+        pool.total_borrowed = 50_000_000;
+        pool.track(&loan(50_000_000, 1_000, NOW)).unwrap();
+        // A year of 10 % on half the pool: 105 USDC for 100 million shares.
+        let withdrawal = pool
+            .withdrawal(40_000_000, u64::MAX, NOW + SECONDS_PER_YEAR)
+            .unwrap();
+        assert_eq!(
+            withdrawal,
+            Withdrawal {
+                paid: 42_000_000,
+                shares: 40_000_000,
+                limited_by: Some(WithdrawalLimit::Position),
+            }
+        );
+    }
+
+    #[test]
+    fn the_lenders_who_stay_lose_nothing_per_share() {
+        let mut pool = pool();
+        pool.total_shares = 100_000_000;
+        pool.total_deposits = 100_000_000;
+        pool.total_borrowed = 60_000_000;
+        pool.track(&loan(60_000_000, 1_317, NOW - 86_400)).unwrap();
+        let before = (pool.value(NOW).unwrap(), u128::from(pool.total_shares));
+        let withdrawal = pool.withdrawal(70_000_000, 33_333_333, NOW).unwrap();
+        pool.total_shares -= withdrawal.shares;
+        pool.total_deposits -= withdrawal.paid;
+        let after = (pool.value(NOW).unwrap(), u128::from(pool.total_shares));
+        assert!(after.0 * before.1 >= before.0 * after.1);
+        assert_eq!(withdrawal.paid, 33_333_333);
+    }
+
+    #[test]
+    fn a_pool_with_nothing_free_explains_instead_of_paying_nothing() {
+        let mut pool = priced_pool();
+        pool.total_borrowed = 1_000;
+        let err = pool.withdrawal(400, 1, NOW).unwrap_err();
+        assert_eq!(code(err), code(error!(RewardFloatError::NoFreeLiquidity)));
+    }
+
+    #[test]
+    fn a_lender_with_nothing_to_withdraw_is_refused() {
+        let err = priced_pool().withdrawal(0, 1, NOW).unwrap_err();
+        assert_eq!(code(err), code(error!(RewardFloatError::NothingToWithdraw)));
+        // Shares in a pool written down to nothing are worth nothing either.
+        let mut wiped = pool();
+        wiped.total_shares = 10;
+        let err = wiped.withdrawal(10, 1, NOW).unwrap_err();
+        assert_eq!(code(err), code(error!(RewardFloatError::NothingToWithdraw)));
+    }
+
+    #[test]
+    fn a_withdrawal_of_nothing_is_refused() {
+        let err = priced_pool().withdrawal(400, 0, NOW).unwrap_err();
+        assert_eq!(code(err), code(error!(RewardFloatError::InvalidAmount)));
+    }
+
+    #[test]
+    fn withdrawing_more_shares_than_the_pool_issued_fails_loud() {
+        let err = priced_pool().withdrawal(1_001, 1, NOW).unwrap_err();
+        assert_eq!(code(err), code(error!(RewardFloatError::MathOverflow)));
+    }
+
+    #[test]
+    fn a_withdrawal_from_the_largest_pool_does_not_wrap() {
+        let mut pool = pool();
+        pool.total_shares = u64::MAX;
+        pool.total_deposits = u64::MAX;
+        pool.accrued_interest = u64::MAX;
+        // Two units a share: a third of u64::MAX costs a sixth of the shares, rounded up.
+        let withdrawal = pool.withdrawal(u64::MAX / 2, u64::MAX / 3, NOW).unwrap();
+        assert_eq!(withdrawal.paid, u64::MAX / 3);
+        assert_eq!(withdrawal.shares, (u64::MAX / 3).div_ceil(2));
     }
 
     #[test]

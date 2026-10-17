@@ -62,4 +62,8 @@ pub mod reward_float {
     pub fn sweep(ctx: Context<Sweep>) -> Result<()> {
         handle_sweep(ctx)
     }
+
+    pub fn withdraw(ctx: Context<Withdraw>, max_amount: u64) -> Result<()> {
+        handle_withdraw(ctx, max_amount)
+    }
 }

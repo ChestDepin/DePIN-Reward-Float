@@ -74,4 +74,10 @@ pub enum RewardFloatError {
     RewardMintIsStablecoin,
     #[msg("an operator with a loan that needs a manual repayment cannot borrow")]
     ManualRepaymentPending,
+    #[msg("the lender holds no shares worth a base unit of the stablecoin")]
+    NothingToWithdraw,
+    #[msg(
+        "all of the pool is out in loans right now; it can be withdrawn as the loans are repaid"
+    )]
+    NoFreeLiquidity,
 }

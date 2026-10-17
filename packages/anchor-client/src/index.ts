@@ -11,6 +11,7 @@ export * from './pda.ts'
 export * from './repay.ts'
 export * from './reward-mints.ts'
 export * from './sweep.ts'
+export * from './withdraw.ts'
 export {
   associatedTokenAddress,
   createAssociatedTokenAccountIdempotent,

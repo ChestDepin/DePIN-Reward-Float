@@ -847,6 +847,76 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "withdraw",
+      "discriminator": [
+        183,
+        18,
+        70,
+        156,
+        148,
+        109,
+        161,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "lender",
+          "signer": true
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "lender_share",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  104,
+                  97,
+                  114,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "lender"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "destination",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "max_amount",
+          "type": "u64"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -967,6 +1037,19 @@
         61,
         165,
         135
+      ]
+    },
+    {
+      "name": "Withdrawn",
+      "discriminator": [
+        20,
+        89,
+        223,
+        198,
+        194,
+        124,
+        219,
+        13
       ]
     }
   ],
@@ -1140,6 +1223,16 @@
       "code": 6033,
       "name": "ManualRepaymentPending",
       "msg": "an operator with a loan that needs a manual repayment cannot borrow"
+    },
+    {
+      "code": 6034,
+      "name": "NothingToWithdraw",
+      "msg": "the lender holds no shares worth a base unit of the stablecoin"
+    },
+    {
+      "code": 6035,
+      "name": "NoFreeLiquidity",
+      "msg": "all of the pool is out in loans right now; it can be withdrawn as the loans are repaid"
     }
   ],
   "types": [
@@ -1570,6 +1663,64 @@
           {
             "name": "remaining_debt",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WithdrawalLimit",
+      "docs": [
+        "Why a withdrawal paid less than the lender asked for (FR-020)."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Position"
+          },
+          {
+            "name": "FreeLiquidity"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Withdrawn",
+      "docs": [
+        "What a withdrawal paid and, when it is less than the lender asked for, why (FR-020)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "lender",
+            "type": "pubkey"
+          },
+          {
+            "name": "requested",
+            "type": "u64"
+          },
+          {
+            "name": "paid",
+            "type": "u64"
+          },
+          {
+            "name": "shares_burned",
+            "type": "u64"
+          },
+          {
+            "name": "limited_by",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "WithdrawalLimit"
+                }
+              }
+            }
           }
         ]
       }

@@ -848,6 +848,76 @@ export type RewardFloat = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "withdraw",
+      "discriminator": [
+        183,
+        18,
+        70,
+        156,
+        148,
+        109,
+        161,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "lender",
+          "signer": true
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "lenderShare",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  104,
+                  97,
+                  114,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "lender"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "destination",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "maxAmount",
+          "type": "u64"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -968,6 +1038,19 @@ export type RewardFloat = {
         61,
         165,
         135
+      ]
+    },
+    {
+      "name": "withdrawn",
+      "discriminator": [
+        20,
+        89,
+        223,
+        198,
+        194,
+        124,
+        219,
+        13
       ]
     }
   ],
@@ -1141,6 +1224,16 @@ export type RewardFloat = {
       "code": 6033,
       "name": "manualRepaymentPending",
       "msg": "an operator with a loan that needs a manual repayment cannot borrow"
+    },
+    {
+      "code": 6034,
+      "name": "nothingToWithdraw",
+      "msg": "the lender holds no shares worth a base unit of the stablecoin"
+    },
+    {
+      "code": 6035,
+      "name": "noFreeLiquidity",
+      "msg": "all of the pool is out in loans right now; it can be withdrawn as the loans are repaid"
     }
   ],
   "types": [
@@ -1571,6 +1664,64 @@ export type RewardFloat = {
           {
             "name": "remainingDebt",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "withdrawalLimit",
+      "docs": [
+        "Why a withdrawal paid less than the lender asked for (FR-020)."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "position"
+          },
+          {
+            "name": "freeLiquidity"
+          }
+        ]
+      }
+    },
+    {
+      "name": "withdrawn",
+      "docs": [
+        "What a withdrawal paid and, when it is less than the lender asked for, why (FR-020)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "lender",
+            "type": "pubkey"
+          },
+          {
+            "name": "requested",
+            "type": "u64"
+          },
+          {
+            "name": "paid",
+            "type": "u64"
+          },
+          {
+            "name": "sharesBurned",
+            "type": "u64"
+          },
+          {
+            "name": "limitedBy",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "withdrawalLimit"
+                }
+              }
+            }
           }
         ]
       }
@@ -2427,6 +2578,76 @@ export const rewardFloatIdl: RewardFloat = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "withdraw",
+      "discriminator": [
+        183,
+        18,
+        70,
+        156,
+        148,
+        109,
+        161,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "lender",
+          "signer": true
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "lenderShare",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  104,
+                  97,
+                  114,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "lender"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "destination",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "maxAmount",
+          "type": "u64"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -2547,6 +2768,19 @@ export const rewardFloatIdl: RewardFloat = {
         61,
         165,
         135
+      ]
+    },
+    {
+      "name": "withdrawn",
+      "discriminator": [
+        20,
+        89,
+        223,
+        198,
+        194,
+        124,
+        219,
+        13
       ]
     }
   ],
@@ -2720,6 +2954,16 @@ export const rewardFloatIdl: RewardFloat = {
       "code": 6033,
       "name": "manualRepaymentPending",
       "msg": "an operator with a loan that needs a manual repayment cannot borrow"
+    },
+    {
+      "code": 6034,
+      "name": "nothingToWithdraw",
+      "msg": "the lender holds no shares worth a base unit of the stablecoin"
+    },
+    {
+      "code": 6035,
+      "name": "noFreeLiquidity",
+      "msg": "all of the pool is out in loans right now; it can be withdrawn as the loans are repaid"
     }
   ],
   "types": [
@@ -3150,6 +3394,64 @@ export const rewardFloatIdl: RewardFloat = {
           {
             "name": "remainingDebt",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "withdrawalLimit",
+      "docs": [
+        "Why a withdrawal paid less than the lender asked for (FR-020)."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "position"
+          },
+          {
+            "name": "freeLiquidity"
+          }
+        ]
+      }
+    },
+    {
+      "name": "withdrawn",
+      "docs": [
+        "What a withdrawal paid and, when it is less than the lender asked for, why (FR-020)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "lender",
+            "type": "pubkey"
+          },
+          {
+            "name": "requested",
+            "type": "u64"
+          },
+          {
+            "name": "paid",
+            "type": "u64"
+          },
+          {
+            "name": "sharesBurned",
+            "type": "u64"
+          },
+          {
+            "name": "limitedBy",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "withdrawalLimit"
+                }
+              }
+            }
           }
         ]
       }

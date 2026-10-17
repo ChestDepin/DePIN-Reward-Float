@@ -6,6 +6,7 @@ pub mod repay;
 pub mod set_attestor;
 pub mod sweep;
 pub mod verify_attestation;
+pub mod withdraw;
 
 pub use borrow::*;
 pub use deposit::*;
@@ -14,3 +15,4 @@ pub use initialize_pool::*;
 pub use repay::*;
 pub use set_attestor::*;
 pub use sweep::*;
+pub use withdraw::*;

@@ -1,7 +1,7 @@
-// SC-006 and SC-007 over random sequences of borrows, repayments, deposits and time
-// passing, run as real transactions against the built program. An independent model of
-// the books predicts the outcome of every step, and after every step the on-chain state
-// has to agree with it to the base unit.
+// SC-006 and SC-007 over random sequences of borrows, repayments, deposits, withdrawals
+// and time passing, run as real transactions against the built program. An independent
+// model of the books predicts the outcome of every step, and after every step the
+// on-chain state has to agree with it to the base unit.
 mod common;
 
 use std::collections::HashMap;
@@ -81,6 +81,16 @@ enum Pay {
 }
 
 #[derive(Clone, Copy, Debug)]
+enum Take {
+    Worth,
+    Everything,
+    ShareOfWorth(u16),
+    Free,
+    OverFree,
+    Raw(u64),
+}
+
+#[derive(Clone, Copy, Debug)]
 enum Op {
     Wait(i64),
     Borrow {
@@ -98,6 +108,10 @@ enum Op {
     Deposit {
         lender: usize,
         amount: u64,
+    },
+    Withdraw {
+        lender: usize,
+        take: Take,
     },
 }
 
@@ -147,7 +161,16 @@ fn op() -> impl Strategy<Value = Op> {
     });
     let amount = prop_oneof![Just(1u64), 1..=MAX_DEPOSITS];
     let deposit = (0..LENDERS, amount).prop_map(|(lender, amount)| Op::Deposit { lender, amount });
-    prop_oneof![4 => borrow, 3 => repay, 2 => wait, 1 => deposit]
+    let take = prop_oneof![
+        Just(Take::Worth),
+        Just(Take::Everything),
+        (1u16..=1_000).prop_map(Take::ShareOfWorth),
+        Just(Take::Free),
+        Just(Take::OverFree),
+        (1..=MAX_DEPOSITS).prop_map(Take::Raw),
+    ];
+    let withdraw = (0..LENDERS, take).prop_map(|(lender, take)| Op::Withdraw { lender, take });
+    prop_oneof![4 => borrow, 3 => repay, 2 => wait, 1 => deposit, 1 => withdraw]
 }
 
 fn share(of: u64, permille: u16) -> u64 {
@@ -172,6 +195,11 @@ struct Coverage {
     deposited_above_par: AtomicU32,
     refused_a_deposit_under_a_share: AtomicU32,
     earned_without_acting: AtomicU32,
+    withdrew: AtomicU32,
+    withdrew_everything: AtomicU32,
+    withdrew_all_free_liquidity: AtomicU32,
+    refused_a_withdrawal_with_nothing_free: AtomicU32,
+    refused_a_withdrawal_with_nothing_held: AtomicU32,
 }
 
 static COVERAGE: Coverage = Coverage {
@@ -190,6 +218,11 @@ static COVERAGE: Coverage = Coverage {
     deposited_above_par: AtomicU32::new(0),
     refused_a_deposit_under_a_share: AtomicU32::new(0),
     earned_without_acting: AtomicU32::new(0),
+    withdrew: AtomicU32::new(0),
+    withdrew_everything: AtomicU32::new(0),
+    withdrew_all_free_liquidity: AtomicU32::new(0),
+    refused_a_withdrawal_with_nothing_free: AtomicU32::new(0),
+    refused_a_withdrawal_with_nothing_held: AtomicU32::new(0),
 };
 
 fn hit(counter: &AtomicU32) {
@@ -433,15 +466,16 @@ impl World {
                 pay,
             } => self.repay(operator, loan, pay)?,
             Op::Deposit { lender, amount } => self.deposit(lender, amount)?,
+            Op::Withdraw { lender, take } => self.withdraw(lender, take)?,
         }
-        let depositor = match op {
-            Op::Deposit { lender, .. } => Some(lender),
+        let acting = match op {
+            Op::Deposit { lender, .. } | Op::Withdraw { lender, .. } => Some(lender),
             _ => None,
         };
-        if depositor.is_none() {
-            // FR-018a: no step but a deposit changes the shares, and none takes value from
-            // them. A loan repaid in full leaves its sub-unit interest behind, which can
-            // take the pool's value down by one unit and no more.
+        if acting.is_none() {
+            // FR-018a: no step but a deposit or a withdrawal changes the shares, and none
+            // takes value from them. A loan repaid in full leaves its sub-unit interest
+            // behind, which can take the pool's value down by one unit and no more.
             let closed = open
                 .iter()
                 .zip(&self.loans)
@@ -450,7 +484,7 @@ impl World {
             prop_assert!(self.value() + closed >= value);
         }
         for lender in 0..LENDERS {
-            if Some(lender) != depositor && self.worth(lender) > worth[lender] {
+            if Some(lender) != acting && self.worth(lender) > worth[lender] {
                 hit(&COVERAGE.earned_without_acting);
             }
         }
@@ -710,6 +744,77 @@ impl World {
         Ok(())
     }
 
+    fn withdraw(&mut self, lender: usize, take: Take) -> Result<(), TestCaseError> {
+        let value = self.value();
+        let held = self.lenders[lender].shares;
+        let worth = self.worth(lender);
+        let free = self.deposits - self.borrowed;
+        let max_amount = match take {
+            Take::Worth => worth,
+            Take::Everything => u64::MAX,
+            Take::ShareOfWorth(permille) => share(worth, permille),
+            Take::Free => free,
+            Take::OverFree => free + 1,
+            Take::Raw(amount) => amount,
+        }
+        .max(1);
+        let not_initialized = anchor_lang::error::ErrorCode::AccountNotInitialized;
+        let expected = if self.stored(&self.lenders[lender].share).is_none() {
+            Err((0, InstructionError::Custom(not_initialized.into())))
+        } else if worth == 0 {
+            refused(0, RewardFloatError::NothingToWithdraw)
+        } else if free == 0 {
+            refused(0, RewardFloatError::NoFreeLiquidity)
+        } else {
+            Ok(())
+        };
+
+        let destination = self.lenders[lender].source;
+        let before = self.token_balance(&destination);
+        let instruction = self.withdraw_instruction(lender, max_amount);
+        let actual = self.run(&[instruction]);
+        prop_assert_eq!(&actual, &expected);
+        match expected {
+            Ok(()) => {}
+            Err((_, InstructionError::Custom(refusal))) => {
+                if refusal == code(RewardFloatError::NothingToWithdraw) {
+                    hit(&COVERAGE.refused_a_withdrawal_with_nothing_held);
+                } else if refusal == code(RewardFloatError::NoFreeLiquidity) {
+                    hit(&COVERAGE.refused_a_withdrawal_with_nothing_free);
+                }
+                return Ok(());
+            }
+            Err(_) => unreachable!(),
+        }
+
+        let paid = max_amount.min(worth).min(free);
+        let burned = if paid == worth {
+            held
+        } else {
+            (u128::from(paid) * u128::from(self.shares)).div_ceil(value) as u64
+        };
+        prop_assert_eq!(self.token_balance(&destination) - before, paid);
+        // FR-020 and SC-007: a lender gets no more than the shares are worth, and never
+        // money that is out in loans.
+        prop_assert!(paid <= worth && paid <= free);
+        // Whoever stays does not lose a unit of value per share to it.
+        prop_assert!(
+            (value - u128::from(paid)) * u128::from(self.shares)
+                >= value * u128::from(self.shares - burned)
+        );
+        self.deposits -= paid;
+        self.shares -= burned;
+        self.lenders[lender].shares -= burned;
+        hit(&COVERAGE.withdrew);
+        if paid == worth {
+            hit(&COVERAGE.withdrew_everything);
+        }
+        if paid == free && paid < max_amount.min(worth) {
+            hit(&COVERAGE.withdrew_all_free_liquidity);
+        }
+        Ok(())
+    }
+
     // Every book the limit check and the liquidity check read, against the model. The
     // limit is checked against `OperatorAccount.total_debt`, so a book that drifts from
     // the loans would make the check compare against the wrong number.
@@ -915,6 +1020,25 @@ impl World {
         }
     }
 
+    fn withdraw_instruction(&self, lender: usize, max_amount: u64) -> Instruction {
+        let who = &self.lenders[lender];
+        Instruction {
+            program_id: m(&reward_float::ID),
+            accounts: metas(
+                reward_float::accounts::Withdraw {
+                    lender: who.key,
+                    pool: self.pool,
+                    lender_share: who.share,
+                    vault: self.vault,
+                    destination: who.source,
+                    token_program: spl_token::ID,
+                }
+                .to_account_metas(None),
+            ),
+            data: reward_float::instruction::Withdraw { max_amount }.data(),
+        }
+    }
+
     fn repay_instruction(&self, loan: &Pubkey, max_amount: u64) -> Instruction {
         let operator = self.read::<Loan>(loan).operator;
         Instruction {
@@ -982,6 +1106,20 @@ fn no_sequence_lends_past_the_limit_or_past_the_free_liquidity_or_dilutes_a_shar
             &COVERAGE.refused_a_deposit_under_a_share,
         ),
         ("earned without acting", &COVERAGE.earned_without_acting),
+        ("withdrew", &COVERAGE.withdrew),
+        ("withdrew everything", &COVERAGE.withdrew_everything),
+        (
+            "withdrew all free liquidity",
+            &COVERAGE.withdrew_all_free_liquidity,
+        ),
+        (
+            "refused a withdrawal with nothing free",
+            &COVERAGE.refused_a_withdrawal_with_nothing_free,
+        ),
+        (
+            "refused a withdrawal with nothing held",
+            &COVERAGE.refused_a_withdrawal_with_nothing_held,
+        ),
     ];
     for (name, counter) in witnessed {
         let count = counter.load(Ordering::Relaxed);
