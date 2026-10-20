@@ -105,6 +105,11 @@ export type SweepJournalConfig = {
   devnetRpcUrl: string
 }
 
+export type PoolConfig = {
+  devnetRpcUrl: string
+  stableMint: SolanaAddress
+}
+
 export type ApiConfig = {
   databaseUrl: string
   attestorSecretKey: string
@@ -115,6 +120,7 @@ export type ApiConfig = {
   rates: RateConfig | null
   keeper: KeeperConfig | null
   sweepJournal: SweepJournalConfig | null
+  pool: PoolConfig | null
 }
 
 export function parseApiConfig(env: unknown): ApiConfig {
@@ -142,6 +148,10 @@ export function parseApiConfig(env: unknown): ApiConfig {
       parsed.data.DEVNET_RPC_URL === undefined
         ? null
         : { devnetRpcUrl: parsed.data.DEVNET_RPC_URL },
+    pool:
+      parsed.data.DEVNET_RPC_URL === undefined || parsed.data.STABLE_MINT === undefined
+        ? null
+        : { devnetRpcUrl: parsed.data.DEVNET_RPC_URL, stableMint: parsed.data.STABLE_MINT },
   }
 }
 

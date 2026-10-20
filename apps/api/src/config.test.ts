@@ -26,6 +26,7 @@ describe('parseApiConfig', () => {
       rates: null,
       keeper: null,
       sweepJournal: null,
+      pool: null,
     })
   })
 
@@ -168,6 +169,23 @@ describe('parseApiConfig: sweep journal', () => {
 
   it('runs no journal without the devnet RPC', () => {
     expect(parseApiConfig({ ...validEnv, DEVNET_RPC_URL: '' }).sweepJournal).toBeNull()
+  })
+})
+
+describe('parseApiConfig: pool', () => {
+  const DEVNET_RPC_URL = 'https://devnet.helius-rpc.com/?api-key=live-key'
+  const STABLE_MINT = '9nScQZ7Jq3jvTDNhmS8hJ9ZpCXDQjwW4NHo3x6dU6uZs'
+
+  it('reads the pool of the stablecoin from devnet, with or without a keeper', () => {
+    expect(parseApiConfig({ ...validEnv, DEVNET_RPC_URL, STABLE_MINT }).pool).toEqual({
+      devnetRpcUrl: DEVNET_RPC_URL,
+      stableMint: STABLE_MINT,
+    })
+  })
+
+  it('serves no pool without both the devnet RPC and the stablecoin', () => {
+    expect(parseApiConfig({ ...validEnv, DEVNET_RPC_URL }).pool).toBeNull()
+    expect(parseApiConfig({ ...validEnv, STABLE_MINT }).pool).toBeNull()
   })
 })
 

@@ -3,13 +3,14 @@ import { createLogger } from '@drf/shared/log'
 import { SUPPORTED_NETWORKS } from '@drf/shared/schemas'
 import { startDevnetKeeper, startSweepJournal } from '@drf/worker/keeper'
 import { serve } from '@hono/node-server'
-import { Connection } from '@solana/web3.js'
+import { Connection, PublicKey } from '@solana/web3.js'
 import { createApp } from './app.ts'
 import { loadApiConfig, type RateConfig } from './config.ts'
 import { createJupiterRateSource, createRpcBlockTime, rateMints } from './jupiter.ts'
 import { rateFromApp } from './keeper.ts'
 import { resolveAttestor } from './routes/attestations.ts'
 import { createChainManualRepaymentSource } from './routes/limit.ts'
+import { createChainPoolSource } from './routes/pool.ts'
 import type { RateSource } from './routes/rate.ts'
 import { createShutdown } from './shutdown.ts'
 
@@ -19,11 +20,21 @@ const SHUTDOWN_GRACE_MS = 10_000
 const UPSTREAM_TIMEOUT_MS = 5_000
 // Short against the two-minute attestation, long against the key's 60 requests a minute.
 const RATE_CACHE_MS = 15_000
+// Every open lender page asks; one RPC read serves them all for this long.
+const POOL_CACHE_MS = 15_000
 
 // Named, not by URL: the RPC url carries the Helius key.
 async function readJson(source: string, response: Response): Promise<unknown> {
   if (!response.ok) throw new Error(`${source} answered ${response.status}`)
   return response.json()
+}
+
+function devnetConnection(rpcUrl: string): Connection {
+  return new Connection(rpcUrl, {
+    commitment: 'confirmed',
+    fetch: (input, init) =>
+      fetch(input, { ...init, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) }),
+  })
 }
 
 function rateSource(rates: RateConfig): RateSource {
@@ -70,13 +81,16 @@ const app = createApp({
   manualRepayments:
     config.sweepJournal === null
       ? null
-      : createChainManualRepaymentSource(
-          new Connection(config.sweepJournal.devnetRpcUrl, {
-            commitment: 'confirmed',
-            fetch: (input, init) =>
-              fetch(input, { ...init, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) }),
-          }),
-        ),
+      : createChainManualRepaymentSource(devnetConnection(config.sweepJournal.devnetRpcUrl)),
+  pool:
+    config.pool === null
+      ? null
+      : createChainPoolSource({
+          reader: devnetConnection(config.pool.devnetRpcUrl),
+          stableMint: new PublicKey(config.pool.stableMint),
+          cacheMs: POOL_CACHE_MS,
+          clock: () => Date.now(),
+        }),
   webOrigins: config.webOrigins,
   now: () => new Date(),
 })

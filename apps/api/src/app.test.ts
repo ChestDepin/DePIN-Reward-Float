@@ -25,6 +25,7 @@ describe('createApp', () => {
     attestor: ATTESTOR,
     rates: null,
     manualRepayments: null,
+    pool: null,
     webOrigins: [ORIGIN],
     now: () => new Date('2026-09-22T12:00:00.000Z'),
   })

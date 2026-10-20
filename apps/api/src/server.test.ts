@@ -42,6 +42,7 @@ const deps = (logger: ReturnType<typeof createLogger>) => ({
   attestor: ATTESTOR,
   rates: null,
   manualRepayments: null,
+  pool: null,
   webOrigins: ['http://localhost:5173'],
   now: () => new Date('2026-08-31T12:00:00.000Z'),
 })
@@ -187,6 +188,15 @@ describe('createServer', () => {
 
     expect(response.status).toBe(503)
     expect(await response.json()).toMatchObject({ error: { code: 'DATA_UNAVAILABLE' } })
+  })
+
+  it('mounts the pool under /v1 and says when it is not set up', async () => {
+    const response = await createServer(deps(capture().logger)).request('/v1/pool')
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({
+      error: { code: 'DATA_UNAVAILABLE', message: 'the pool is not set up' },
+    })
   })
 
   it('answers an unknown route in the shared error shape', async () => {

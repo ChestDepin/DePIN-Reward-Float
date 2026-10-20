@@ -6,6 +6,7 @@ import { createDbPayoutActivitySource } from './routes/health.ts'
 import { createDbCreditProfileStore, type ManualRepaymentSource } from './routes/limit.ts'
 import { createDbWithholdingSource } from './routes/loans.ts'
 import { createDbPayoutHistorySource } from './routes/operators.ts'
+import type { PoolSource } from './routes/pool.ts'
 import type { RateSource } from './routes/rate.ts'
 import { createServer } from './server.ts'
 
@@ -17,6 +18,7 @@ export type AppDeps = {
   attestor: Attestor
   rates: RateSource | null
   manualRepayments: ManualRepaymentSource | null
+  pool: PoolSource | null
   webOrigins: readonly string[]
   now: () => Date
 }
@@ -29,6 +31,7 @@ export function createApp({
   attestor,
   rates,
   manualRepayments,
+  pool,
   webOrigins,
   now,
 }: AppDeps): Hono {
@@ -40,6 +43,7 @@ export function createApp({
     journal: createDbAttestationJournal(db),
     withholdings: createDbWithholdingSource(db),
     manualRepayments,
+    pool,
     attestor,
     rates,
     webOrigins,

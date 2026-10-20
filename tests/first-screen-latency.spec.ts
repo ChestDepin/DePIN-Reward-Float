@@ -94,6 +94,7 @@ describe.skipIf(url === undefined)('SC-009 — the first screen of the dashboard
         attestor: ATTESTOR,
         rates: null,
         manualRepayments: null,
+        pool: null,
         webOrigins: [origin],
         now: () => NOW,
       }).fetch,

@@ -15,6 +15,7 @@ import {
 } from './routes/limit.ts'
 import { createLoanRoutes, type WithholdingSource } from './routes/loans.ts'
 import { createOperatorRoutes, type PayoutHistorySource } from './routes/operators.ts'
+import { createPoolRoutes, type PoolSource } from './routes/pool.ts'
 import { createRateRoutes, type RateSource } from './routes/rate.ts'
 
 export type ServerDeps = {
@@ -26,6 +27,8 @@ export type ServerDeps = {
   withholdings: WithholdingSource
   // null: the api runs without devnet, and whether a loan is flagged is unknown.
   manualRepayments: ManualRepaymentSource | null
+  // null: the api runs without devnet, and the pool endpoint says so.
+  pool: PoolSource | null
   attestor: Attestor
   // null: the api runs without rates, and the rate endpoint says so.
   rates: RateSource | null
@@ -43,6 +46,7 @@ export function createServer({
   journal,
   withholdings,
   manualRepayments,
+  pool,
   attestor,
   rates,
   webOrigins,
@@ -64,6 +68,7 @@ export function createServer({
   )
   app.route('/v1', createRateRoutes({ rates, attestor, now }))
   app.route('/v1', createLoanRoutes({ withholdings }))
+  app.route('/v1', createPoolRoutes({ pool }))
 
   app.notFound((c) => c.json(errorBody('NOT_FOUND', 'route not found'), 404))
 

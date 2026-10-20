@@ -51,6 +51,7 @@ describe.skipIf(url === undefined)('SC-001 — connecting a wallet until the lim
       attestor: ATTESTOR,
       rates: null,
       manualRepayments: null,
+      pool: null,
       // Замір ходить у процесі, без браузера, тож жодне походження йому не
       // потрібне — але список порожнім бути не може.
       webOrigins: ['http://localhost:5173'],
