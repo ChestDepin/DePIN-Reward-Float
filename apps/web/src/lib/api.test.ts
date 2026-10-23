@@ -204,6 +204,29 @@ describe('createApiClient', () => {
     expect(result).toEqual({ ok: true, value: journal })
   })
 
+  it('asks for the pool, which belongs to no wallet', async () => {
+    const pool = {
+      pool: 'H43YZPfes8jsfzyjxF5sddQTLHfEKSwW8YmFzEBpPAZu',
+      stableMint: WALLET,
+      totalDeposits: '1001000023',
+      borrowed: '400000000',
+      free: '601000023',
+      utilisationBps: 3996,
+      loanAprBps: 1200,
+      lenderAprBps: 479,
+    }
+    const calls: [string, string | undefined][] = []
+    const client = clientOver(async (input, init) => {
+      calls.push([String(input), init?.method])
+      return answered(200, pool)
+    })
+
+    const result = await client.pool()
+
+    expect(calls).toEqual([['https://api.example.com/v1/pool', 'GET']])
+    expect(result).toEqual({ ok: true, value: pool })
+  })
+
   it('reads an api without rates as data that is unavailable', async () => {
     const client = clientOver(async () =>
       answered(503, { error: { code: 'DATA_UNAVAILABLE', message: 'rates are not set up' } }),

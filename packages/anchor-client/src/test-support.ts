@@ -114,6 +114,19 @@ export async function encodePool(fields: {
   })
 }
 
+export async function encodeLenderShare(fields: {
+  pool: PublicKey
+  owner: PublicKey
+  shares: bigint
+}): Promise<Buffer> {
+  return coder.accounts.encode('lenderShare', {
+    pool: fields.pool,
+    owner: fields.owner,
+    shares: new BN(fields.shares.toString()),
+    bump: 250,
+  })
+}
+
 export async function encodeRewardWatch(fields: {
   operator: PublicKey
   rewardMint: PublicKey
@@ -156,7 +169,7 @@ export async function issuedRate(
   })
 }
 
-type EventName = 'swept' | 'sweepSkipped' | 'manualRepaymentNeeded'
+type EventName = 'swept' | 'sweepSkipped' | 'manualRepaymentNeeded' | 'withdrawn'
 
 function eventData(name: EventName, data: Record<string, unknown>): string {
   const event = rewardFloatIdl.events.find((e) => e.name === name)
@@ -182,6 +195,17 @@ export function sweepLogs(events: readonly { name: EventName; data: Record<strin
     'Program log: Instruction: Sweep',
     ...events.map((event) => eventData(event.name, event.data)),
     `Program ${program} consumed 23000 of 200000 compute units`,
+    `Program ${program} success`,
+  ]
+}
+
+export function withdrawLogs(events: readonly { name: EventName; data: Record<string, unknown> }[]) {
+  const program = rewardFloatIdl.address
+  return [
+    `Program ${program} invoke [1]`,
+    'Program log: Instruction: Withdraw',
+    ...events.map((event) => eventData(event.name, event.data)),
+    `Program ${program} consumed 10422 of 200000 compute units`,
     `Program ${program} success`,
   ]
 }

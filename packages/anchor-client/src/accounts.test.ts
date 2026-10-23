@@ -9,12 +9,14 @@ import { describe, expect, it } from 'vitest'
 import {
   type ChainReader,
   decodeConversionVault,
+  decodeLenderShare,
   decodeLoan,
   decodeOperatorAccount,
   decodePool,
   decodeRewardWatch,
   fetchAllOpenLoans,
   fetchConversionVault,
+  fetchLenderShare,
   fetchOpenLoans,
   fetchOperatorAccount,
   fetchPool,
@@ -22,9 +24,10 @@ import {
   OpenLoansOutOfSync,
   openLoansForBorrow,
 } from './accounts.ts'
-import { operatorAccountAddress, rewardFloatProgramId } from './pda.ts'
+import { lenderShareAddress, operatorAccountAddress, rewardFloatProgramId } from './pda.ts'
 import {
   encodeConversionVault,
+  encodeLenderShare,
   encodeLoan,
   encodeOperatorAccount,
   encodePool,
@@ -156,6 +159,16 @@ describe('decoding program accounts', () => {
     expect(watch.balance).toBe(18_446_744_073_709_551_615n)
   })
 
+  it('reads a lender share without losing u64 precision', async () => {
+    const share = decodeLenderShare(
+      await encodeLenderShare({ pool: key(6), owner: key(7), shares: 2n ** 64n - 1n }),
+    )
+
+    expect(share.pool.equals(key(6))).toBe(true)
+    expect(share.owner.equals(key(7))).toBe(true)
+    expect(share.shares).toBe(2n ** 64n - 1n)
+  })
+
   it('refuses bytes of another account type', async () => {
     const pool = await encodePool({ attestor: key(3), stableMint: key(4), vault: key(5) })
 
@@ -205,6 +218,29 @@ describe('reading accounts from the chain', () => {
 
   it('reads a missing operator account as an operator who never borrowed', async () => {
     expect(await fetchOperatorAccount(chain([]), key(1))).toBeNull()
+  })
+
+  it('reads the share of the lender in the pool, and none for a wallet that never deposited', async () => {
+    const pool = key(6)
+    const lender = key(7)
+    const reader = chain([
+      stored(
+        lenderShareAddress(pool, lender),
+        await encodeLenderShare({ pool, owner: lender, shares: 400n }),
+      ),
+    ])
+
+    expect((await fetchLenderShare(reader, pool, lender))?.shares).toBe(400n)
+    expect(await fetchLenderShare(reader, pool, key(8))).toBeNull()
+  })
+
+  it('refuses a lender share written by another program', async () => {
+    const pool = key(6)
+    const lender = key(7)
+    const data = await encodeLenderShare({ pool, owner: lender, shares: 400n })
+    const reader = chain([stored(lenderShareAddress(pool, lender), data, key(77))])
+
+    await expect(fetchLenderShare(reader, pool, lender)).rejects.toThrow(/not owned by/)
   })
 
   it('finds every active and overdue loan of the operator and nothing else', async () => {

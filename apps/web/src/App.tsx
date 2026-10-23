@@ -11,6 +11,7 @@ import NotFound from './pages/NotFound'
 // it; loaded with the rest, it would weigh on every first screen (SC-009).
 const Borrow = lazy(() => import('./pages/Borrow'))
 const Mandate = lazy(() => import('./pages/Mandate'))
+const Pool = lazy(() => import('./pages/Pool'))
 const Position = lazy(() => import('./pages/Position'))
 
 const App = () => {
@@ -45,6 +46,14 @@ const App = () => {
           element={
             <Suspense fallback={<p className="text-[13px] text-dim">loading…</p>}>
               <Mandate />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/pool"
+          element={
+            <Suspense fallback={<p className="text-[13px] text-dim">loading…</p>}>
+              <Pool />
             </Suspense>
           }
         />

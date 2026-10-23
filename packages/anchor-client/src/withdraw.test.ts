@@ -3,8 +3,8 @@ import { PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 import { decodePool } from './accounts.ts'
 import { lenderShareAddress, poolAddress, rewardFloatProgramId } from './pda.ts'
-import { coder, encodePool, key, offlineProgram } from './test-support.ts'
-import { withdrawInstruction } from './withdraw.ts'
+import { coder, encodePool, key, offlineProgram, withdrawLogs } from './test-support.ts'
+import { withdrawInstruction, withdrawnEvent } from './withdraw.ts'
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 
@@ -59,5 +59,32 @@ describe('withdraw instruction', () => {
     await expect(
       withdrawInstruction(program, { lender, pool: await onChainPool(), maxAmount: 2n ** 64n }),
     ).rejects.toThrow(RangeError)
+  })
+})
+
+describe('withdrawn event', () => {
+  const event = (limitedBy: Record<string, object> | null) => ({
+    name: 'withdrawn' as const,
+    data: { pool, lender, requested: 500n, paid: 300n, sharesBurned: 240n, limitedBy },
+  })
+
+  it('reads what was paid and that the free liquidity held it back', () => {
+    expect(withdrawnEvent(withdrawLogs([event({ freeLiquidity: {} })]))).toEqual({
+      pool,
+      lender,
+      requested: 500n,
+      paid: 300n,
+      sharesBurned: 240n,
+      limitedBy: 'free-liquidity',
+    })
+  })
+
+  it('reads a position that held it back, and a withdrawal paid in full', () => {
+    expect(withdrawnEvent(withdrawLogs([event({ position: {} })]))?.limitedBy).toBe('position')
+    expect(withdrawnEvent(withdrawLogs([event(null)]))?.limitedBy).toBeNull()
+  })
+
+  it('finds nothing in a transaction without the event', () => {
+    expect(withdrawnEvent(withdrawLogs([]))).toBeNull()
   })
 })

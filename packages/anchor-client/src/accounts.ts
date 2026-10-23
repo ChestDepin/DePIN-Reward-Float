@@ -2,7 +2,7 @@ import { BN, BorshCoder, utils } from '@coral-xyz/anchor'
 import { type AccountInfo, type GetProgramAccountsFilter, PublicKey } from '@solana/web3.js'
 import { z } from 'zod'
 import { rewardFloatIdl } from './idl/reward-float.ts'
-import { operatorAccountAddress, rewardFloatProgramId } from './pda.ts'
+import { lenderShareAddress, operatorAccountAddress, rewardFloatProgramId } from './pda.ts'
 
 const coder = new BorshCoder(rewardFloatIdl)
 
@@ -69,6 +69,13 @@ export const poolSchema = z.object({
   bump: small,
 })
 
+export const lenderShareSchema = z.object({
+  pool: pubkey,
+  owner: pubkey,
+  shares: integer,
+  bump: small,
+})
+
 export const conversionVaultSchema = z.object({
   pool: pubkey,
   rewardMint: pubkey,
@@ -87,6 +94,7 @@ export const rewardWatchSchema = z.object({
 })
 
 export type ConversionVaultAccount = z.infer<typeof conversionVaultSchema>
+export type LenderShareAccount = z.infer<typeof lenderShareSchema>
 export type LoanAccount = z.infer<typeof loanSchema>
 export type OperatorAccount = z.infer<typeof operatorAccountSchema>
 export type PoolAccount = z.infer<typeof poolSchema>
@@ -103,6 +111,10 @@ export function decodeOperatorAccount(data: Buffer): OperatorAccount {
 
 export function decodePool(data: Buffer): PoolAccount {
   return poolSchema.parse(coder.accounts.decode<unknown>('pool', data))
+}
+
+export function decodeLenderShare(data: Buffer): LenderShareAccount {
+  return lenderShareSchema.parse(coder.accounts.decode<unknown>('lenderShare', data))
 }
 
 export function decodeConversionVault(data: Buffer): ConversionVaultAccount {
@@ -157,6 +169,16 @@ export async function fetchOperatorAccount(
 ): Promise<OperatorAccount | null> {
   const data = await readProgramAccount(reader, operatorAccountAddress(operator))
   return data === null ? null : decodeOperatorAccount(data)
+}
+
+// No account means the wallet has never deposited here: deposit opens it.
+export async function fetchLenderShare(
+  reader: ChainReader,
+  pool: PublicKey,
+  owner: PublicKey,
+): Promise<LenderShareAccount | null> {
+  const data = await readProgramAccount(reader, lenderShareAddress(pool, owner))
+  return data === null ? null : decodeLenderShare(data)
 }
 
 const LOAN_OPERATOR_OFFSET = 8

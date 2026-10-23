@@ -7,6 +7,7 @@ const NAV = [
   { to: '/borrow', label: 'BORROW' },
   { to: '/position', label: 'POSITION' },
   { to: '/mandate', label: 'MANDATE' },
+  { to: '/pool', label: 'POOL' },
 ]
 
 const Terminal = () => {
@@ -38,8 +39,8 @@ const Terminal = () => {
         </main>
 
         <footer className="border-t border-rule py-6 text-[11px] leading-relaxed text-dim">
-          Reads public payout history without a wallet. A signature is asked for only to borrow, and
-          the loan is made on devnet.
+          Reads public payout history without a wallet. A signature is asked for only to borrow or to
+          lend, and both happen on devnet.
           <br />
           Network names appear only as the source of the payout data being read. Payout history and
           credit limits are read from the chain.

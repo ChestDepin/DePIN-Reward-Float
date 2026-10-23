@@ -6,7 +6,9 @@ import {
   issuedAttestationSchema,
   issuedRateAttestationSchema,
   type PayoutHistory,
+  type PoolState,
   payoutHistorySchema,
+  poolStateSchema,
   type Withholdings,
   withholdingsSchema,
 } from '@drf/shared/api'
@@ -73,6 +75,7 @@ export type ApiClient = {
   issueLimitAttestation(address: SolanaAddress): Promise<ApiResult<IssuedAttestation>>
   issueRateAttestation(rewardMint: SolanaAddress): Promise<ApiResult<IssuedRateAttestation>>
   withholdings(address: SolanaAddress): Promise<ApiResult<Withholdings>>
+  pool(): Promise<ApiResult<PoolState>>
 }
 
 export type ApiClientOptions = {
@@ -128,6 +131,7 @@ export function createApiClient({
       call(issuedRateAttestationSchema, '/v1/attestations/rate', 'POST', { rewardMint }),
     withholdings: (address) =>
       call(withholdingsSchema, `/v1/operators/${address}/withholdings`, 'GET'),
+    pool: () => call(poolStateSchema, '/v1/pool', 'GET'),
   }
 }
 
